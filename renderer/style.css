@@ -1191,3 +1191,126 @@ input::placeholder {
 .ver-note.fail {
   color: #e06a5f;
 }
+
+/* ---------- 缺陷 ---------- */
+
+.tag.bug {
+  background: rgba(255, 93, 93, 0.16);
+  color: #ff8a8a;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.tag.b-active {
+  background: rgba(255, 93, 93, 0.14);
+  color: #ff8a8a;
+}
+
+.tag.b-resolved {
+  background: rgba(78, 201, 160, 0.14);
+  color: var(--ok);
+}
+
+.tag.b-closed {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-faint);
+}
+
+.sev {
+  padding: 0 5px;
+  height: 15px;
+  line-height: 15px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.sev[data-sev="1"] {
+  background: rgba(255, 93, 93, 0.18);
+  color: #ff7a7a;
+}
+
+.sev[data-sev="2"] {
+  background: rgba(255, 159, 67, 0.16);
+  color: var(--today);
+}
+
+.sev[data-sev="3"] {
+  background: rgba(240, 197, 82, 0.14);
+  color: var(--soon);
+}
+
+.pri-txt {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.due.muted {
+  color: var(--text-faint);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.b-act {
+  color: var(--text-faint);
+}
+
+/* 缺陷行的左侧色条：没截止日期也按优先级给个颜色，别一整排灰 */
+.item.bug[data-status="active"] .bar {
+  box-shadow: inset 0 0 0 1px rgba(255, 93, 93, 0.25);
+}
+
+.item.bug .name {
+  -webkit-line-clamp: 2;
+}
+
+.item.bug[data-status="resolved"] .name {
+  color: var(--text-dim);
+}
+
+.item.bug[data-status="closed"] .name {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.act.resolve:hover {
+  background: var(--ok);
+  color: #07231a;
+}
+
+.act.close:hover {
+  background: #6b7688;
+  color: #0d1117;
+}
+
+.bm-fields[hidden] {
+  display: none;
+}
+
+textarea {
+  min-height: 56px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  line-height: 1.6;
+  outline: none;
+  resize: none;
+  user-select: text;
+}
+
+textarea:focus {
+  border-color: rgba(232, 163, 61, 0.55);
+}
+
+textarea::placeholder {
+  color: #4b5364;
+}

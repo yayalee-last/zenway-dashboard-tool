@@ -11,6 +11,31 @@ const STATUS_LABEL = {
   cancel: '已取消',
 };
 
+/** 缺陷状态跟任务不是一套词 */
+const BUG_STATUS = { active: '激活', resolved: '已解决', closed: '已关闭' };
+const SEV_LABEL = { 1: '致命', 2: '严重', 3: '一般', 4: '建议' };
+const BUG_TYPE = {
+  codeerror: '代码错误',
+  config: '配置相关',
+  install: '安装部署',
+  security: '安全相关',
+  performance: '性能问题',
+  standard: '标准规范',
+  automation: '测试脚本',
+  designdefect: '设计缺陷',
+  others: '其他',
+};
+const RESOLUTION_LABEL = {
+  fixed: '已解决',
+  bydesign: '设计如此',
+  duplicate: '重复 Bug',
+  external: '外部原因',
+  notrepro: '无法重现',
+  postponed: '延期处理',
+  willnotfix: '不予解决',
+  tostory: '转需求',
+};
+
 const DONE = new Set(['done', 'closed', 'cancel']);
 const RANK = { overdue: 0, today: 1, soon: 2, later: 3 };
 
@@ -45,7 +70,10 @@ function urgentOf(item) {
 }
 
 function isDone(it) {
-  return DONE.has(String(it.status || '').toLowerCase());
+  const s = String(it.status || '').toLowerCase();
+  // 缺陷的 resolved 还没关闭，仍算在手头（等确认/关闭）
+  if (it.kind === 'bug') return s === 'closed' || s === 'cancel';
+  return DONE.has(s);
 }
 
 function fmtClock(ts) {
@@ -81,6 +109,7 @@ function visibleItems() {
   const f = S.filter;
 
   if (f === 'open') arr = arr.filter((i) => !isDone(i));
+  else if (f === 'bug') arr = arr.filter((i) => i.kind === 'bug' && !isDone(i));
   else if (f === 'overdue') arr = arr.filter((i) => !isDone(i) && daysUntil(i.deadline) !== null && daysUntil(i.deadline) < 0);
   else if (f === 'today') arr = arr.filter((i) => !isDone(i) && daysUntil(i.deadline) === 0);
 
@@ -109,14 +138,20 @@ function renderList() {
   }
 
   if (S.st.needSetup || !S.cfg.baseUrl) {
-    list.append(renderEmpty('还没连上禅道', '填一下地址和账号，任务就挂桌面上了', '去配置'));
+    list.append(renderEmpty('还没连上禅道', '填一下地址和账号，任务和缺陷就挂桌面上了', '去配置'));
   } else if (S.st.error) {
     list.append(renderEmpty('拉取失败', S.st.error, '检查连接'));
+  } else if (S.filter === 'bug') {
+    list.append(
+      S.st.bugWarn
+        ? renderEmpty('缺陷没拉下来', S.st.bugWarn, '检查连接')
+        : renderEmpty('没有派给你的缺陷', '测试提给你的 bug 会出现在这儿', null)
+    );
   } else if (S.filter === 'all' || S.filter === 'open') {
     list.append(
       S.items.length
         ? renderEmpty('这一栏是空的', '切到别的分栏看看', null)
-        : renderEmpty('没有任务', '安心干活', null)
+        : renderEmpty('没有代办', '安心干活', null)
     );
   } else {
     list.append(renderEmpty('这一栏是空的', '切到「未完成」看看', null));
@@ -138,6 +173,8 @@ function renderEmpty(title, sub, btnText) {
 }
 
 function renderItem(it) {
+  if (it.kind === 'bug') return renderBugItem(it);
+
   const urgent = urgentOf(it);
   const statusLower = String(it.status || '').toLowerCase();
 
@@ -197,6 +234,62 @@ function renderItem(it) {
   });
 
   return row;
+}
+
+/** 缺陷条目：比任务多一个严重程度，少工时就、子任务那套 */
+function renderBugItem(it) {
+  const st = String(it.status || '').toLowerCase();
+  const urgent = urgentOf(it);
+
+  const row = el('div', 'item bug');
+  row.dataset.urgent = urgent;
+  row.dataset.status = st;
+  row.dataset.kind = 'bug';
+  row.title = `${it.name}\n缺陷 #${it.id}${it.product ? ` · ${it.product}` : ''}`;
+
+  row.append(el('div', 'bar'));
+
+  const body = el('div', 'body');
+  const head = el('div', 'head');
+  head.append(el('div', 'name', it.name));
+  body.append(head);
+
+  const meta = el('div', 'meta');
+  meta.append(el('span', 'tag bug', 'BUG'));
+  meta.append(el('span', `tag b-${st}`, it.statusName || BUG_STATUS[st] || it.status || ''));
+  meta.append(mkSev(it.severity));
+  if (it.pri) meta.append(el('span', 'pri-txt', `P${it.pri}`));
+
+  if (it.deadline) meta.append(el('span', `due ${urgent}`, dueLabel(it)));
+  else if (it.product) meta.append(el('span', 'due muted', String(it.product).replace(/^【[^】]+】/, '')));
+
+  body.append(meta);
+  row.append(body);
+
+  const acts = el('div', 'acts');
+  if (st === 'active') acts.append(mkBugAct('解决', 'resolve', it));
+  else if (st === 'resolved') acts.append(mkBugAct('关闭', 'close', it));
+  if (acts.children.length) row.append(acts);
+
+  row.addEventListener('click', () => openDetail(it));
+  return row;
+}
+
+function mkSev(n) {
+  const s = el('span', 'sev');
+  s.dataset.sev = String(Number(n) || 0);
+  s.textContent = n ? `S${n}` : 'S-';
+  s.title = n ? `严重程度：${SEV_LABEL[n] || n}` : '未设置严重程度';
+  return s;
+}
+
+function mkBugAct(text, action, it) {
+  const b = el('button', `act ${action}`, text);
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openBugAction(action, it);
+  });
+  return b;
 }
 
 function mkAct(text, action, it) {
@@ -335,9 +428,65 @@ async function confirmTaskAction() {
   if (DT.open && DT.data && DT.data.id) loadDetail(DT.data.id);
 }
 
+/* ---------------- 缺陷流转（解决 / 关闭） ---------------- */
+
+let bugPending = null;
+
+function openBugAction(action, it) {
+  bugPending = { action, it };
+  const resolving = action === 'resolve';
+  $('bm-title').textContent = resolving ? '解决缺陷' : '关闭缺陷';
+  $('bm-task').textContent = it.name || it.title || `缺陷 #${it.id}`;
+  $('bm-resolve-fields').hidden = !resolving;
+  $('bm-resolution').value = 'fixed';
+  $('bm-build').value = 'trunk';
+  $('bm-comment-label').textContent = resolving ? '备注（可选）' : '关闭原因（可选）';
+  $('bm-comment').placeholder = resolving ? '改了什么 / 为什么这么解决' : '为什么可以关闭，比如已验证通过';
+  $('bm-comment').value = '';
+  $('bm-err').hidden = true;
+  $('bm-ok').disabled = false;
+  $('bm-ok').textContent = '确认';
+  $('bug-modal').hidden = false;
+  window.zt.resize(560);
+  $('bm-comment').focus();
+}
+
+function closeBugAction() {
+  $('bug-modal').hidden = true;
+  bugPending = null;
+  requestAnimationFrame(autoHeight);
+}
+
+async function confirmBugAction() {
+  if (!bugPending) return;
+  const { action, it } = bugPending;
+  const comment = $('bm-comment').value.trim();
+  const payload =
+    action === 'resolve'
+      ? { resolution: $('bm-resolution').value, resolvedBuild: $('bm-build').value.trim() || 'trunk', comment }
+      : { comment };
+
+  const btn = $('bm-ok');
+  btn.disabled = true;
+  btn.textContent = '提交中…';
+  const r = await window.zt.bugAction({ id: it.id, action, payload });
+  btn.disabled = false;
+  btn.textContent = '确认';
+
+  if (!r.ok) {
+    $('bm-err').hidden = false;
+    $('bm-err').textContent = r.error || '操作失败';
+    return;
+  }
+
+  closeBugAction();
+  toast(action === 'resolve' ? '已标记为解决' : '缺陷已关闭', 'ok');
+  if (DT.open && DT.kind === 'bug' && DT.id === it.id) loadBugDetail(it.id);
+}
+
 /* ---------------- 任务详情（挂件内直接看） ---------------- */
 
-const DT = { open: false, id: 0, data: null };
+const DT = { open: false, kind: 'task', id: 0, data: null };
 
 function fmtDT(v) {
   if (!v) return '';
@@ -350,9 +499,10 @@ function fmtDT(v) {
 
 async function openDetail(it) {
   DT.open = true;
+  DT.kind = it.kind === 'bug' ? 'bug' : 'task';
   DT.id = it.id;
   DT.data = null;
-  $('dt-id').textContent = `#${it.id}`;
+  $('dt-id').textContent = `${DT.kind === 'bug' ? '缺陷 ' : ''}#${it.id}`;
   $('dt-body').replaceChildren(el('div', 'dt-empty', '读取中…'));
   $('dt-foot').hidden = true;
   $('list').hidden = true;
@@ -360,7 +510,19 @@ async function openDetail(it) {
   $('detail').hidden = false;
   $('dt-body').scrollTop = 0;
   window.zt.resize(600);
-  await loadDetail(it.id);
+  if (DT.kind === 'bug') await loadBugDetail(it.id);
+  else await loadDetail(it.id);
+}
+
+async function loadBugDetail(id) {
+  const r = await window.zt.bugDetail(id);
+  if (!DT.open || DT.kind !== 'bug' || DT.id !== id) return;
+  if (!r.ok) {
+    $('dt-body').replaceChildren(el('div', 'dt-empty', r.error || '读取失败'));
+    return;
+  }
+  DT.data = r.bug;
+  renderBugDetail(r.bug);
 }
 
 async function loadDetail(id) {
@@ -376,6 +538,7 @@ async function loadDetail(id) {
 
 function closeDetail() {
   DT.open = false;
+  DT.kind = 'task';
   DT.data = null;
   $('detail').hidden = true;
   $('list').hidden = false;
@@ -526,6 +689,105 @@ function renderDetail(t) {
   foot.hidden = false;
 }
 
+/** 缺陷详情：重现步骤是富文本，图片同样内联成 data URL */
+function renderBugDetail(b) {
+  const body = $('dt-body');
+  const st = String(b.status || '').toLowerCase();
+  body.replaceChildren();
+
+  body.append(el('div', 'dt-title', b.title));
+
+  const badges = el('div', 'dt-badges');
+  badges.append(el('span', `tag b-${st}`, b.statusName || BUG_STATUS[st] || b.status || ''));
+  badges.append(mkSev(b.severity));
+  const pri = el('span', 'pri-dot');
+  pri.dataset.pri = String(b.pri || 0);
+  pri.append(el('i'));
+  pri.append(el('span', null, b.pri ? `P${b.pri}` : '-'));
+  badges.append(pri);
+  if (b.deadline) badges.append(el('span', `due ${urgentOf(b)}`, dueLabel(b)));
+  if (Number(b.activatedCount) > 0) badges.append(el('span', 'b-act', `激活 ${b.activatedCount} 次`));
+  body.append(badges);
+
+  const grid = el('div', 'dt-grid');
+  const kv = (k, v, strong) => {
+    if (v === undefined || v === null) return;
+    const s = String(v).trim();
+    if (!s || s === '-' || s === '/') return;
+    const c = el('div', 'kv');
+    c.append(el('div', 'k', k));
+    c.append(el('div', strong ? 'v strong' : 'v', s));
+    grid.append(c);
+  };
+  kv('所属产品', b.productName);
+  kv('所属项目', b.projectName);
+  kv('模块', b.moduleTitle);
+  kv('类型', BUG_TYPE[b.type] || b.type);
+  kv('创建', `${b.openedBy || ''}${b.openedDate ? ` · ${fmtDT(b.openedDate)}` : ''}`);
+  kv('指派给', b.assignedTo);
+  kv('截止', b.deadline ? String(b.deadline).slice(0, 10) : '未设置');
+  if (b.resolution) kv('解决方案', RESOLUTION_LABEL[b.resolution] || b.resolution, true);
+  if (b.resolvedBuild) kv('解决版本', b.resolvedBuild);
+  if (b.resolvedBy) kv('解决人', b.resolvedBy);
+  if (b.resolvedDate) kv('解决时间', fmtDT(b.resolvedDate));
+  if (b.closedDate) kv('关闭时间', fmtDT(b.closedDate));
+  if (b.storyTitle) kv('关联需求', b.storyTitle);
+  if (b.taskName) kv('关联任务', b.taskName);
+  if (grid.children.length) body.append(grid);
+
+  body.append(el('div', 'dt-h', '重现步骤'));
+  if (b.steps && b.steps.trim()) {
+    const d = el('div', 'dt-desc');
+    d.innerHTML = b.steps;
+    body.append(d);
+    fixImages(d);
+  } else {
+    body.append(el('div', 'dt-empty', '这条缺陷没写重现步骤'));
+  }
+
+  if (b.files && b.files.length) {
+    body.append(el('div', 'dt-h', `附件 ${b.files.length}`));
+    for (const f of b.files) {
+      const line = el('div', 'dt-sub');
+      line.append(el('span', 'sname', f.name));
+      line.append(el('span', 'swho', f.url ? '浏览器打开' : '需登录'));
+      line.addEventListener('click', () => f.url && window.zt.open(f.url));
+      body.append(line);
+    }
+  }
+
+  if (b.history && b.history.length) {
+    body.append(el('div', 'dt-h', '动态'));
+    const log = el('div', 'dt-log');
+    for (const h of b.history) {
+      const lg = el('div', 'lg');
+      lg.append(el('b', null, h.actor || '系统'));
+      lg.append(document.createTextNode(` ${fmtDT(h.date)}`));
+      if (h.text) lg.append(el('div', null, h.text));
+      if (h.comment) {
+        const c = el('span', 'cmt');
+        c.innerHTML = h.comment;
+        lg.append(c);
+      }
+      log.append(lg);
+    }
+    body.append(log);
+  }
+
+  const foot = $('dt-foot');
+  foot.replaceChildren();
+  const act = st === 'active' ? ['resolve', '解决缺陷'] : st === 'resolved' ? ['close', '关闭缺陷'] : null;
+  if (act) {
+    const btn = el('button', 'btn primary', act[1]);
+    btn.addEventListener('click', () => openBugAction(act[0], b));
+    foot.append(btn);
+  }
+  const open = el('button', 'btn ghost', '浏览器打开');
+  open.addEventListener('click', () => window.zt.open(b.url));
+  foot.append(open);
+  foot.hidden = false;
+}
+
 /* ---------------- toast ---------------- */
 
 let toastTimer = null;
@@ -547,18 +809,22 @@ function renderStatus() {
   st.replaceChildren();
   st.title = '';
 
+  const openTasks = S.items.filter((i) => i.kind !== 'bug' && !isDone(i)).length;
+  const openBugs = S.items.filter((i) => i.kind === 'bug' && !isDone(i)).length;
+
   if (S.st.error) {
     st.classList.add('err');
     st.textContent = S.st.error;
     st.title = S.st.error;
   } else if (S.st.ok) {
-    st.textContent = `${fmtClock(S.st.at)} 刷新 · 共 ${S.items.length} 条`;
+    st.textContent = `${fmtClock(S.st.at)} · 任务 ${openTasks} · 缺陷 ${openBugs}`;
+    if (S.st.bugWarn) st.title = `缺陷没拉下来：${S.st.bugWarn}`;
+    else if (S.st.bugTruncated) st.title = '缺陷太多，只统计了最近一部分，剩下的去禅道看';
   } else {
     st.textContent = '等待刷新…';
   }
 
-  const open = S.items.filter((i) => !isDone(i)).length;
-  $('count').textContent = String(open);
+  $('count').textContent = String(openTasks + openBugs);
 }
 
 /* ---------------- 更新 ---------------- */
@@ -649,7 +915,7 @@ function renderAll() {
 /** 窗口高度跟着内容走，别留一大片空 */
 function autoHeight() {
   // 弹层打开时窗口尺寸由弹层自己定，别让列表把它缩回去
-  if (!$('modal').hidden || !$('task-modal').hidden) return;
+  if (!$('modal').hidden || !$('task-modal').hidden || !$('bug-modal').hidden) return;
   const list = $('list');
   let content;
   if (list.querySelector('.empty')) {
@@ -843,17 +1109,26 @@ function bind() {
     if (e.target === $('task-modal')) closeTaskAction();
   });
 
+  $('bm-close').addEventListener('click', closeBugAction);
+  $('bm-cancel').addEventListener('click', closeBugAction);
+  $('bm-ok').addEventListener('click', confirmBugAction);
+  $('bug-modal').addEventListener('click', (e) => {
+    if (e.target === $('bug-modal')) closeBugAction();
+  });
+
   $('tabs').addEventListener('click', (e) => {
     const t = e.target.closest('.tab');
     if (!t) return;
     S.filter = t.dataset.filter;
     for (const b of $('tabs').children) b.classList.toggle('active', b === t);
     renderList();
+    requestAnimationFrame(autoHeight);
   });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (!$('task-modal').hidden) return closeTaskAction();
+      if (!$('bug-modal').hidden) return closeBugAction();
       if (!$('modal').hidden) return closeSettings();
       if (DT.open) return closeDetail();
     }

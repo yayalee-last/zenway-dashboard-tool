@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('zt', {
   open: (url) => ipcRenderer.invoke('open:external', url),
   taskDetail: (id) => ipcRenderer.invoke('task:detail', id),
   taskAction: (payload) => ipcRenderer.invoke('task:action', payload),
+  bugDetail: (id) => ipcRenderer.invoke('bug:detail', id),
+  bugAction: (payload) => ipcRenderer.invoke('bug:action', payload),
   minimize: () => ipcRenderer.invoke('win:minimize'),
   resize: (h) => ipcRenderer.invoke('win:resize', h),
   quit: () => ipcRenderer.invoke('win:close'),

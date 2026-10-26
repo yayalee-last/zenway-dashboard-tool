@@ -172,6 +172,29 @@ function createWindow() {
             await win.webContents.executeJavaScript(`openDetail({ id: ${Number(detailId.split('=')[1]) || 0} })`);
             await new Promise((r) => setTimeout(r, 1600));
           }
+          if (process.argv.includes('--bug-list')) {
+            await win.webContents.executeJavaScript(`document.querySelector('.tab[data-filter="bug"]').click()`);
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          const bugId = process.argv.find((a) => a.startsWith('--bug-detail='));
+          if (bugId) {
+            await win.webContents.executeJavaScript(`openDetail({ id: ${Number(bugId.split('=')[1]) || 0}, kind: 'bug' })`);
+            await new Promise((r) => setTimeout(r, 1800));
+          }
+          if (process.argv.includes('--bug-action')) {
+            await win.webContents.executeJavaScript(
+              `(() => {
+                 const detailOpen = !document.getElementById('detail').hidden;
+                 const b = detailOpen ? document.querySelector('#dt-foot .btn.primary') : document.querySelector('.item .act');
+                 if (b) b.click();
+               })()`
+            );
+            await new Promise((r) => setTimeout(r, 700));
+          }
+          if (process.argv.includes('--bug-submit')) {
+            await win.webContents.executeJavaScript(`document.getElementById('bm-ok').click()`);
+            await new Promise((r) => setTimeout(r, 900));
+          }
           if (process.argv.includes('--hover')) {
             await win.webContents.executeJavaScript(
               `(() => { const s = document.createElement('style'); s.textContent = '.acts{opacity:1!important;pointer-events:auto!important}'; document.head.append(s); })()`
@@ -244,8 +267,10 @@ function toggleWindow() {
 /* ---------------- 托盘 ---------------- */
 
 function buildTrayMenu() {
+  const s = openStats();
   return Menu.buildFromTemplate([
     { label: state.ok ? `上次刷新：${fmtTime(state.at)}` : '尚未成功刷新', enabled: false },
+    { label: `待办 任务 ${s.task} · 缺陷 ${s.bug}`, enabled: false },
     { type: 'separator' },
     { label: '立即刷新', click: () => doRefresh('tray') },
     { label: '打开禅道', click: () => shell.openExternal(client ? client.indexUrl() : config.baseUrl) },
@@ -300,10 +325,24 @@ function updateMenuItem() {
   return { label: `检查更新（当前 v${app.getVersion()}）`, click: () => checkUpdate() };
 }
 
+function openStats() {
+  const skip = new Set(['done', 'closed', 'cancel']);
+  let task = 0;
+  let bug = 0;
+  for (const i of state.items || []) {
+    if (skip.has(String(i.status || '').toLowerCase())) continue;
+    if (i.kind === 'bug') bug += 1;
+    else task += 1;
+  }
+  return { task, bug, total: task + bug };
+}
+
 function updateTrayMenu() {
   if (!tray) return;
   tray.setContextMenu(buildTrayMenu());
-  tray.setToolTip(state.ok ? `禅道挂件 · 未完成 ${state.items.filter((i) => i.status !== 'done').length}` : '禅道挂件 · 未连接');
+  if (!state.ok) return tray.setToolTip('禅道挂件 · 未连接');
+  const s = openStats();
+  tray.setToolTip(`禅道挂件 · 待办 ${s.total}（任务 ${s.task} / 缺陷 ${s.bug}）`);
 }function createTray() {
   try {
     tray = new Tray(makeTrayIcon());
@@ -507,8 +546,31 @@ async function doRefresh(reason = 'timer') {
   }
   refreshing = true;
   try {
-    const { items, strategy, execCount } = await client.fetchMyTasks();
-    state = { ok: true, items, at: Date.now(), error: null, strategy, execCount, needSetup: false };
+    // 任务和缺陷走两套接口，各拉各的；一边挂了另一边照常显示
+    const [tRes, bRes] = await Promise.allSettled([client.fetchMyTasks(), client.fetchMyBugs()]);
+    const taskOk = tRes.status === 'fulfilled';
+    const bugOk = bRes.status === 'fulfilled';
+    if (!taskOk && !bugOk) throw tRes.reason;
+
+    const items = [
+      ...(taskOk ? tRes.value.items : []),
+      ...(bugOk ? bRes.value.items : []),
+    ];
+    const bugWarn = bugOk ? null : (bRes.reason && bRes.reason.message) || '缺陷拉取失败';
+
+    state = {
+      ok: true,
+      items,
+      at: Date.now(),
+      error: null,
+      strategy: taskOk ? tRes.value.strategy : 'bugs-only',
+      execCount: taskOk ? tRes.value.execCount : 0,
+      taskCount: taskOk ? tRes.value.items.length : 0,
+      bugCount: bugOk ? bRes.value.items.length : 0,
+      bugWarn,
+      bugTruncated: bugOk ? Boolean(bRes.value.truncated) : false,
+      needSetup: false,
+    };
   } catch (e) {
     state = {
       ok: false,
@@ -579,6 +641,7 @@ function wireIpc() {
     schedule();
     client.projectCache = null;
     client.execCache = null;
+    client.productCache = null;
     const s = await doRefresh('config');
     return { state: s, config: publicConfig() };
   });
@@ -681,6 +744,127 @@ function wireIpc() {
       const expect = { start: 'doing', finish: 'done', close: 'closed' }[action];
       if (actual && expect && actual !== expect) {
         return { ok: false, error: `没生效，任务状态还是「${actual}」`, state };
+      }
+      return { ok: true, state, status: actual };
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) };
+    }
+  });
+
+  ipcMain.handle('bug:detail', async (_e, id) => {
+    if (process.argv.includes('--mock')) {
+      const { MOCK_BUG_DETAIL } = require('./mock');
+      const n = Number(id) || MOCK_BUG_DETAIL.id;
+      const base = { ...MOCK_BUG_DETAIL, id: n };
+      // 1048 用来演示「已解决 → 关闭」那一套
+      if (n === 1048) {
+        Object.assign(base, {
+          status: 'resolved',
+          statusName: '已解决',
+          resolution: 'fixed',
+          resolvedBuild: 'trunk',
+          resolvedBy: '杨成',
+          resolvedDate: '2026-10-26 14:10:00',
+        });
+      }
+      return { ok: true, bug: base };
+    }
+    try {
+      const d = await client.getBugDetail(id);
+      const name = (o) => (o && (o.realname || o.account)) || '';
+      const files = (d.files || [])
+        .map((f) => {
+          const fid = Number(f.id || f.fileID) || 0;
+          return {
+            id: fid,
+            name: String(f.title || f.name || f.realname || `附件 ${fid}`),
+            url: fid ? `${config.baseUrl}/index.php?m=file&f=download&fileID=${fid}` : '',
+          };
+        })
+        .filter((f) => f.name);
+
+      return {
+        ok: true,
+        bug: {
+          id: Number(d.id),
+          title: d.title || '',
+          status: d.status || '',
+          statusName: d.statusName || '',
+          severity: Number(d.severity) || 0,
+          pri: Number(d.pri) || 0,
+          type: d.type || '',
+          productName: d.productName || '',
+          moduleTitle: d.moduleTitle || '',
+          projectName: d.projectName || '',
+          executionName: d.executionName || '',
+          openedBy: name(d.openedBy),
+          openedDate: d.openedDate || null,
+          assignedTo: name(d.assignedTo),
+          assignedDate: d.assignedDate || null,
+          deadline: d.deadline || null,
+          resolvedBy: name(d.resolvedBy),
+          resolution: d.resolution || '',
+          resolvedBuild: (d.resolvedBuild && (d.resolvedBuild.title || d.resolvedBuild)) || '',
+          resolvedDate: d.resolvedDate || null,
+          closedDate: d.closedDate || null,
+          activatedCount: Number(d.activatedCount) || 0,
+          confirmed: Number(d.confirmed) || 0,
+          storyTitle: d.storyTitle || '',
+          taskName: d.taskName || '',
+          url: client.bugUrl(Number(d.id)),
+          steps: await inlineDescImages(sanitizeHtml(d.steps, config.baseUrl)),
+          files,
+          history: (d.actions || [])
+            .filter((a) => a && a.action !== 'mentioned')
+            .slice(-12)
+            .reverse()
+            .map((a) => ({
+              actor: a.actor || '',
+              date: a.date || '',
+              action: a.action || '',
+              text: sanitizeHtml(a.desc || '', config.baseUrl)
+                .replace(/<[^>]+>/g, '')
+                .replace(/^\s*\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2},?\s*/, '')
+                .replace(/\s+/g, ' ')
+                .trim(),
+              comment: sanitizeHtml(a.comment || '', config.baseUrl),
+            })),
+        },
+      };
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) };
+    }
+  });
+
+  ipcMain.handle('bug:action', async (_e, { id, action, payload } = {}) => {
+    if (process.argv.includes('--mock')) {
+      const fake = (process.argv.find((a) => a.startsWith('--mock-bug-fail')) || '').includes('fail');
+      if (fake) return { ok: false, error: '「解决方案」不能为空（mock）' };
+      return { ok: true, state, status: action === 'resolve' ? 'resolved' : 'closed' };
+    }
+    try {
+      if (action === 'resolve') await client.resolveBug(id, payload || {});
+      else if (action === 'close') await client.closeBug(id, payload && payload.comment);
+      else throw new Error(`不支持的操作：${action}`);
+
+      // 跟任务一样：禅道对不生效的写操作也可能回 200，必须回查状态
+      await new Promise((r) => setTimeout(r, 400));
+      let actual = null;
+      try {
+        actual = (await client.getBugDetail(id)).status || null;
+      } catch {
+        /* 查不到就跳过校验 */
+      }
+
+      await doRefresh('bug-action');
+
+      const expect = { resolve: 'resolved', close: 'closed' }[action];
+      if (actual && expect && actual !== expect) {
+        return {
+          ok: false,
+          error: `禅道没真改（状态还是「${actual}」），多半是解决方案/解决版本不对，换个版本号再试`,
+          state,
+        };
       }
       return { ok: true, state, status: actual };
     } catch (e) {

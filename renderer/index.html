@@ -44,6 +44,7 @@
 
       <nav class="tabs" id="tabs">
         <button class="tab active" data-filter="open">未完成</button>
+        <button class="tab" data-filter="bug">缺陷</button>
         <button class="tab" data-filter="overdue">逾期</button>
         <button class="tab" data-filter="today">今天</button>
         <button class="tab" data-filter="all">全部</button>
@@ -185,6 +186,50 @@
           <div class="panel-foot">
             <button class="btn ghost" id="tm-cancel">取消</button>
             <button class="btn primary" id="tm-ok">确认</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal" id="bug-modal" hidden>
+        <div class="panel tight">
+          <div class="panel-head">
+            <span id="bm-title">解决缺陷</span>
+            <button class="icon" id="bm-close">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+          </div>
+          <div class="tm-task" id="bm-task"></div>
+          <div class="bm-fields" id="bm-resolve-fields">
+            <div class="row">
+              <label class="field">
+                <span>解决方案</span>
+                <select id="bm-resolution">
+                  <option value="fixed">已解决</option>
+                  <option value="bydesign">设计如此</option>
+                  <option value="duplicate">重复 Bug</option>
+                  <option value="external">外部原因</option>
+                  <option value="notrepro">无法重现</option>
+                  <option value="postponed">延期处理</option>
+                  <option value="willnotfix">不予解决</option>
+                  <option value="tostory">转需求</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>解决版本</span>
+                <input id="bm-build" type="text" placeholder="trunk" spellcheck="false" />
+              </label>
+            </div>
+          </div>
+          <label class="field">
+            <span id="bm-comment-label">备注（可选）</span>
+            <textarea id="bm-comment" rows="3" placeholder="改了什么 / 为什么这么解决" spellcheck="false"></textarea>
+          </label>
+          <div class="test-result fail" id="bm-err" hidden></div>
+          <div class="panel-foot">
+            <button class="btn ghost" id="bm-cancel">取消</button>
+            <button class="btn primary" id="bm-ok">确认</button>
           </div>
         </div>
       </div>
