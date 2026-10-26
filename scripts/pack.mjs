@@ -13,11 +13,14 @@
  */
 
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ZipArchive } from 'archiver';
-import { ensureWin32Runtime } from './electron-dist.mjs';
+import { ensureWin32Runtime, ELECTRON_VERSION } from './electron-dist.mjs';
+import updateFormat from '../electron/update-format.js';
+const { APP_ARCHIVE, UPDATE_MANIFEST, UPDATE_SCHEMA } = updateFormat;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -172,19 +175,37 @@ const total = dirSize(OUT);
 console.log(`  目录  ${OUT}`);
 console.log(`  体积  ${mb(total)}`);
 
-await new Promise((resolve, reject) => {
-  const output = fs.createWriteStream(ZIP);
-  const archive = new ZipArchive({ zlib: { level: 6 } });
-  output.on('close', resolve);
-  output.on('warning', (e) => {
-    if (e.code !== 'ENOENT') reject(e);
+async function zipDirectory(from, dest, entryName) {
+  await new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(dest);
+    const archive = new ZipArchive({ zlib: { level: 6 } });
+    output.on('close', resolve);
+    output.on('error', reject);
+    archive.on('warning', reject);
+    archive.on('error', reject);
+    archive.pipe(output);
+    archive.directory(from, entryName);
+    archive.finalize().catch(reject);
   });
-  archive.on('error', reject);
-  archive.pipe(output);
-  archive.directory(OUT, path.basename(OUT));
-  archive.finalize();
-});
-console.log(`  压缩包 ${ZIP}  ${mb(fs.statSync(ZIP).size)}`);
+}
+
+await zipDirectory(OUT, ZIP, path.basename(OUT));
+console.log(`  完整包 ${ZIP}  ${mb(fs.statSync(ZIP).size)}`);
+
+const appZip = path.join(RELEASE, APP_ARCHIVE);
+await zipDirectory(APP_DIR, appZip, 'app');
+const appBytes = fs.readFileSync(appZip);
+fs.writeFileSync(path.join(RELEASE, UPDATE_MANIFEST), JSON.stringify({
+  schemaVersion: UPDATE_SCHEMA,
+  version: src.version,
+  electronVersion: ELECTRON_VERSION,
+  platform: 'win32',
+  arch: 'x64',
+  asset: APP_ARCHIVE,
+  size: appBytes.length,
+  sha256: createHash('sha256').update(appBytes).digest('hex'),
+}, null, 2) + '\n');
+console.log(`  应用包 ${appZip}  ${(appBytes.length / 1024).toFixed(1)} KB`);
 
 console.log('');
 console.log('完成。双击 ' + path.join(OUT, `${APP_NAME}.exe`) + ' 即可运行。');

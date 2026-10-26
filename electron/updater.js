@@ -7,15 +7,16 @@
  *   1. 拉 releases/latest，比对 tag 与本机版本
  *   2. 下载 zip 附件到 userData/updates/
  *   3. 用 Expand-Archive 解压到 updates/extract-<ver>/
- *   4. 写一个 cmd 助手：等本进程退出 → robocopy 覆盖 → 重新拉起
- *   5. 本进程退出，cmd 接管
+ *   4. 后台助手等待本次进程退出，再替换应用并重新启动
+ *   5. 替换失败时恢复旧版，等待超过 30 秒则停止
  *
- * 之所以要 cmd 中转：Windows 上正在运行的 exe 不能被覆盖，
+ * Windows 上正在运行的 exe 不能被覆盖，
  * 只能先退出自己，再让外部进程替换文件。
  */
 
 const fs = require('node:fs');
-const os = require('node:os');
+const { createHash, randomUUID } = require('node:crypto');
+const { APP_ARCHIVE, UPDATE_MANIFEST, UPDATE_SCHEMA } = require('./update-format');
 const path = require('node:path');
 const { execFile, spawn } = require('node:child_process');
 
@@ -23,6 +24,18 @@ const DEFAULT_API =
   'https://api.github.com/repos/yayalee-last/zenway-dashboard-tool/releases/latest';
 
 const UA = 'zentao-widget-updater';
+
+function releaseAsset(asset, kind = 'full', sha256) {
+  if (!asset) return null;
+  const digest = /^sha256:([a-f0-9]{64})$/i.exec(asset.digest || '');
+  return {
+    name: asset.name,
+    url: asset.browser_download_url,
+    size: Number(asset.size) || 0,
+    kind,
+    sha256: sha256 || (digest ? digest[1].toLowerCase() : undefined),
+  };
+}
 
 /* ---------------- 版本号 ---------------- */
 
@@ -78,9 +91,9 @@ class Updater {
     this.current = currentVersion || '0.0.0';
     this.apiUrl = apiUrl || DEFAULT_API;
     this.stateDir = stateDir;
-    this.appDir = appDir;
+    this.appDir = path.resolve(appDir);
     this.exeName = exeName || path.basename(process.execPath);
-    this.updateDir = path.join(stateDir, 'updates');
+    this.updateDir = path.resolve(stateDir, 'updates');
   }
 
   /* --- 1. 查询 --- */
@@ -121,13 +134,36 @@ class Updater {
       if (!latest) return { ok: false, error: '发行版缺少版本号标签' };
 
       const assets = Array.isArray(body.assets) ? body.assets : [];
-      // 优先选 win32-x64 的 zip
-      const pick =
+      const full = assets.find((a) => a.name === 'ZentaoWidget-win32-x64.zip') ||
         assets.find((a) => /\.zip$/i.test(a.name || '') && /win32|windows/i.test(a.name || '')) ||
-        assets.find((a) => /\.zip$/i.test(a.name || '')) ||
-        null;
-
+        assets.find((a) => /\.zip$/i.test(a.name || '') && a.name !== APP_ARCHIVE);
+      let pick = releaseAsset(full);
       const hasUpdate = cmpVer(latest, this.current) > 0;
+      const metadata = assets.find((a) => a.name === UPDATE_MANIFEST);
+
+      if (hasUpdate && metadata && process.versions.electron) {
+        try {
+          const response = await fetch(metadata.browser_download_url, {
+            headers: { 'User-Agent': UA },
+            signal: ac.signal,
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const manifest = await response.json();
+          const appAsset = assets.find((a) => a.name === APP_ARCHIVE);
+          if (manifest.schemaVersion === UPDATE_SCHEMA &&
+              manifest.version === latest.replace(/^v/i, '') &&
+              manifest.electronVersion === process.versions.electron &&
+              manifest.platform === process.platform && manifest.arch === process.arch &&
+              manifest.asset === APP_ARCHIVE && /^[a-f0-9]{64}$/i.test(manifest.sha256 || '') &&
+              Number.isSafeInteger(manifest.size) && manifest.size > 0 &&
+              appAsset && manifest.size === Number(appAsset.size)) {
+            pick = releaseAsset(appAsset, 'app', manifest.sha256.toLowerCase());
+          }
+        } catch (error) {
+          if (error.name === 'AbortError') throw error;
+          // 元数据不可用时仍允许使用兼容旧客户端的完整包。
+        }
+      }
 
       return {
         ok: true,
@@ -136,7 +172,7 @@ class Updater {
         hasUpdate,
         notes: String(body.body || '').slice(0, 4000),
         publishedAt: body.published_at || body.created_at || null,
-        asset: pick ? { name: pick.name, url: pick.browser_download_url, size: Number(pick.size) || 0 } : null,
+        asset: pick,
         assetMissing: hasUpdate && !pick,
       };
     } catch (e) {
@@ -179,8 +215,13 @@ class Updater {
     }
 
     const buf = Buffer.concat(chunks);
-    if (total && Math.abs(buf.length - total) > 1024) {
+    if (total && buf.length !== total) {
       throw new Error(`下载不完整：收到 ${buf.length} 字节，应为 ${total}`);
+    }
+
+    if (asset.kind === 'app' && !asset.sha256) throw new Error('应用更新包缺少校验信息');
+    if (asset.sha256 && createHash('sha256').update(buf).digest('hex') !== asset.sha256) {
+      throw new Error('更新包校验失败，请重新下载');
     }
 
     fs.writeFileSync(partPath, buf);
@@ -191,8 +232,9 @@ class Updater {
 
   /* --- 3. 解压 + 交给 cmd 助手 --- */
 
-  async install(zipPath, version) {
+  async install(zipPath, version, asset = {}) {
     const extractDir = path.join(this.updateDir, `extract-${String(version).replace(/[^\w.\-]+/g, '_')}`);
+    if (path.dirname(path.resolve(extractDir)) !== this.updateDir) throw new Error('更新解压路径异常');
     fs.rmSync(extractDir, { recursive: true, force: true });
     fs.mkdirSync(extractDir, { recursive: true });
 
@@ -207,54 +249,67 @@ class Updater {
       srcRoot = path.join(extractDir, entries[0].name);
     }
 
-    if (!fs.existsSync(path.join(srcRoot, this.exeName))) {
+    const appOnly = asset.kind === 'app';
+    const packageDir = appOnly ? srcRoot : path.join(srcRoot, 'resources', 'app');
+    const pkg = JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8'));
+    if (pkg.name !== 'zentao-widget' || pkg.version !== String(version).replace(/^v/i, '') ||
+        pkg.main !== 'electron/main.js' ||
+        !fs.existsSync(path.join(packageDir, 'electron', 'main.js')) ||
+        !fs.existsSync(path.join(packageDir, 'renderer', 'index.html'))) {
+      throw new Error('更新包的应用或版本不匹配');
+    }
+    if (!appOnly && !fs.existsSync(path.join(srcRoot, this.exeName))) {
       throw new Error(`解压后没找到 ${this.exeName}，包结构不对`);
     }
 
-    const script = this.writeApplyScript(srcRoot, this.appDir, this.exeName);
+    const script = this.writeApplyScript(srcRoot, this.appDir, this.exeName, appOnly);
     return { script, srcRoot };
   }
 
-  /**
-   * 生成 cmd 助手。
-   *
-   * 脚本内容保持纯 ASCII，路径不写进文件，而是通过环境变量传进去
-   * （CreateProcess 走 UTF-16，不会因为安装路径带中文或空格而乱码）。
-   */
-  writeApplyScript(srcRoot, dstRoot, exeName) {
-    const dir = path.join(os.tmpdir(), 'zentao-widget-update');
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, 'apply-update.cmd');
-
-    const lines = [
-      '@echo off',
-      'setlocal enableextensions',
-      '',
-      ':wait',
-      'tasklist /FI "IMAGENAME eq %ZT_EXE%" 2>nul | find /I "%ZT_EXE%" >nul',
-      'if not errorlevel 1 (',
-      '  timeout /t 1 /nobreak >nul',
-      '  goto wait',
-      ')',
-      '',
-      'robocopy "%ZT_SRC%" "%ZT_DST%" /MIR /NFL /NDL /NJH /NJS /NC /NS /NP >nul',
-      'if exist "%ZT_DST%\\%ZT_EXE%" start "" "%ZT_DST%\\%ZT_EXE%"',
-      '(goto) 2>nul & del "%~f0"',
-      '',
-    ];
-
-    fs.writeFileSync(file, lines.join('\r\n'), 'latin1');
-    return { file, env: { ZT_SRC: srcRoot, ZT_DST: dstRoot, ZT_EXE: exeName } };
+  /** 复制独立的 PowerShell 助手；只等待本次 PID，后台限时替换并支持回滚。 */
+  writeApplyScript(srcRoot, dstRoot, exeName, appOnly = false) {
+    fs.mkdirSync(this.updateDir, { recursive: true });
+    const file = path.join(this.updateDir, `apply-${randomUUID()}.ps1`);
+    fs.copyFileSync(path.join(__dirname, 'apply-update.ps1'), file);
+    return {
+      file,
+      env: {
+        ZT_SRC: path.resolve(srcRoot),
+        ZT_TARGET: appOnly ? path.join(dstRoot, 'resources', 'app') : dstRoot,
+        ZT_LAUNCH: path.join(dstRoot, exeName),
+        ZT_PARENT_PID: String(process.pid),
+        ZT_LOG: path.join(this.updateDir, 'apply-update.log'),
+        ZT_READY: file + '.ready',
+      },
+    };
   }
 
-  /** 拉起助手脚本并让本进程退出 */
-  launchApply(script) {
-    const child = spawn('cmd.exe', ['/c', script.file], {
+  async launchApply(script) {
+    const wrapper = script.file + '.vbs';
+    fs.writeFileSync(wrapper, [
+      'Set shell = CreateObject("WScript.Shell")',
+      'command = "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & shell.Environment("PROCESS")("ZT_HELPER_PS") & """"',
+      'WScript.Quit shell.Run(command, 0, True)',
+    ].join('\r\n'), 'ascii');
+    const child = spawn('wscript.exe', ['//B', '//Nologo', wrapper], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
-      env: { ...process.env, ...script.env },
+      cwd: path.dirname(script.file),
+      env: { ...process.env, ...script.env, ZT_HELPER_PS: script.file },
     });
+    await new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('spawn', resolve);
+    });
+    const deadline = Date.now() + 5000;
+    while (!fs.existsSync(script.env.ZT_READY)) {
+      if (child.exitCode !== null || Date.now() >= deadline) {
+        child.kill();
+        throw new Error('后台更新助手未能启动');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     child.unref();
     return true;
   }

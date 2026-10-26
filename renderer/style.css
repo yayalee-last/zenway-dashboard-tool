@@ -96,32 +96,6 @@ body {
   gap: 2px;
 }
 
-.update-alert {
-  -webkit-app-region: no-drag;
-  align-self: center;
-  flex: none;
-  height: 24px;
-  margin-right: 4px;
-  padding: 0 7px;
-  border: 1px solid rgba(232, 163, 61, 0.35);
-  border-radius: 7px;
-  background: rgba(232, 163, 61, 0.13);
-  color: var(--accent);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.update-alert[hidden] {
-  display: none;
-}
-
-.update-alert:hover {
-  background: rgba(232, 163, 61, 0.23);
-}
-
 .icon {
   -webkit-app-region: no-drag;
   width: 26px;

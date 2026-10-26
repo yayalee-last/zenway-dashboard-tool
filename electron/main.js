@@ -393,7 +393,7 @@ async function checkUpdate({ silent = false } = {}) {
     update.hasUpdate = Boolean(r.hasUpdate);
     update.notes = r.notes || '';
     update.asset = r.asset || null;
-    if (r.assetMissing) update.error = `新版本 ${r.latest} 没有附带安装包，去 Gitee 发行版页面手动下载`;
+    if (r.assetMissing) update.error = `新版本 ${r.latest} 没有适用的更新包，去 GitHub 发行版页面查看`;
   } else {
     update.error = r.error || '检查更新失败';
   }
@@ -421,18 +421,22 @@ async function installUpdate() {
     });
 
     // 解压 + 生成替换脚本，成功后才退出自己
-    const { script } = await updater.install(zipPath, update.latest);
+    const { script } = await updater.install(zipPath, update.latest, update.asset);
     update.percent = 100;
     pushUpdate();
 
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
-        updater.launchApply(script);
+        await updater.launchApply(script);
+        app.__quitting = true;
+        app.quit();
       } catch (e) {
+        update.downloading = false;
+        update.error = `启动更新助手失败：${e.message || e}`;
+        pushUpdate();
+        updateTrayMenu();
         console.error('[update] 拉起更新脚本失败', e);
       }
-      app.__quitting = true;
-      app.quit();
     }, 500);
 
     return { ok: true };
@@ -616,7 +620,7 @@ function wireIpc() {
   ipcMain.handle('update:install', () => installUpdate());
   ipcMain.handle('update:state', () => publicUpdate());
   ipcMain.handle('update:open-release', () => {
-    shell.openExternal('https://gitee.com/work_ai_tools/zenway-dashboard-tool/releases');
+    shell.openExternal('https://github.com/yayalee-last/zenway-dashboard-tool/releases');
   });
 
   ipcMain.handle('zentao:refresh', async () => {

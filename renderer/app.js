@@ -831,14 +831,6 @@ function renderStatus() {
 
 function renderUpdate() {
   const up = S.up || {};
-  const alert = $('btn-update-alert');
-  alert.hidden = !up.hasUpdate && !up.downloading;
-  alert.textContent = up.downloading
-    ? (up.percent != null ? `下载中 ${up.percent}%` : '下载中…')
-    : '有新版本';
-  alert.title = up.downloading ? '正在下载更新，点击查看进度' : `发现新版本 ${up.latest || ''}，点击查看更新`;
-  alert.setAttribute('aria-label', alert.title);
-
   const bar = $('update-bar');
   const show = Boolean(up.downloading) || (up.hasUpdate && !S.upDismissed);
   bar.hidden = !show;
@@ -1167,7 +1159,6 @@ function bind() {
 
   // 更新相关
   $('btn-check-update').addEventListener('click', checkUpdateManual);
-  $('btn-update-alert').addEventListener('click', openUpdate);
   $('ub-go').addEventListener('click', doInstallUpdate);
   $('ub-close').addEventListener('click', () => {
     S.upDismissed = true;

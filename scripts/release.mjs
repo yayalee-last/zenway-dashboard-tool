@@ -14,6 +14,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import updateFormat from '../electron/update-format.js';
+const { APP_ARCHIVE, UPDATE_MANIFEST } = updateFormat;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -26,6 +28,11 @@ const TOKEN = process.env.GITHUB_TOKEN || '';
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const TAG = `v${pkg.version}`;
 const ZIP = path.join(ROOT, 'release', 'ZentaoWidget-win32-x64.zip');
+const artifacts = [
+  { file: ZIP, type: 'application/zip' },
+  { file: path.join(ROOT, 'release', APP_ARCHIVE), type: 'application/zip' },
+  { file: path.join(ROOT, 'release', UPDATE_MANIFEST), type: 'application/json' },
+];
 
 /* ---------- 参数 ---------- */
 
@@ -41,11 +48,14 @@ if (!skipPack) {
   execFileSync(process.execPath, [path.join(HERE, 'pack.mjs')], { stdio: 'inherit', cwd: ROOT });
 }
 
-if (!fs.existsSync(ZIP)) {
-  console.error(`找不到 ${ZIP}，先跑一次 npm run pack`);
-  process.exit(1);
+for (const artifact of artifacts) {
+  if (!fs.existsSync(artifact.file)) {
+    console.error(`找不到 ${artifact.file}，先跑一次 npm run pack`);
+    process.exit(1);
+  }
 }
-const sizeMb = (fs.statSync(ZIP).size / 1024 / 1024).toFixed(1);
+const manifest = JSON.parse(fs.readFileSync(artifacts[2].file, 'utf8'));
+if (manifest.version !== pkg.version) throw new Error('更新包版本与 package.json 不一致，请重新打包');
 
 /* ---------- 2. 没有令牌就走手动流程 ---------- */
 
@@ -54,7 +64,7 @@ if (!TOKEN) {
   console.log('没有设置 GITHUB_TOKEN，已跳过自动发布。手动上传步骤：');
   console.log(`  1. 打开 https://github.com/${OWNER}/${REPO}/releases/new`);
   console.log(`  2. 标签填 ${TAG}，标题填 ${TAG}`);
-  console.log(`  3. 上传 ${ZIP}（${sizeMb} MB）`);
+  console.log(`  3. 上传完整包、应用小包和更新元数据：${artifacts.map((a) => path.basename(a.file)).join('、')}`);
   console.log('  4. 发布后客户端下次启动就能收到更新');
   console.log('');
   console.log('想全自动：set GITHUB_TOKEN=xxx 后重跑本脚本，或使用 GitHub Actions。');
@@ -99,6 +109,7 @@ try {
       name: TAG,
       target_commitish: process.env.GITHUB_SHA || 'main',
       body: note || `禅道挂件 ${TAG}`,
+      draft: true,
     }),
   });
 } catch (e) {
@@ -112,22 +123,30 @@ console.log(`  release id ${releaseId}`);
 
 /* ---------- 4. 上传附件 ---------- */
 
-console.log(`上传 ${path.basename(ZIP)}（${sizeMb} MB）…`);
-
 const uploadUrl = release.upload_url.replace(/\{.*$/, '');
 
 try {
-  const asset = await api(`${uploadUrl}?name=${encodeURIComponent(path.basename(ZIP))}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/zip' },
-    body: fs.readFileSync(ZIP),
+  for (const artifact of artifacts) {
+    const name = path.basename(artifact.file);
+    console.log(`上传 ${name} …`);
+    const asset = await api(`${uploadUrl}?name=${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': artifact.type },
+      body: fs.readFileSync(artifact.file),
+    });
+    console.log(`  附件已上传：${asset.name || name}`);
+  }
+  await api(`${API}/releases/${releaseId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ draft: false }),
   });
-  console.log(`  附件已上传：${asset.name || path.basename(ZIP)}`);
 } catch (e) {
-  console.error('附件上传失败：' + e.message);
-  console.error('Release 已创建，去网页手动补一个附件也可以。');
+  console.error('发布失败：' + e.message);
+  console.error('草稿已保留，所有附件上传成功后才会公开。');
   process.exit(1);
 }
+
 
 /* ---------- 5. 收尾 ---------- */
 
