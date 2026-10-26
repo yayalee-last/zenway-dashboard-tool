@@ -6,9 +6,12 @@
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
+    "pack": "node scripts/pack.mjs",
+    "icon": "node scripts/make-icon.mjs",
     "probe": "node probe.mjs"
   },
   "devDependencies": {
-    "electron": "^45.0.0"
+    "electron": "^45.0.0",
+    "rcedit": "^5.0.1"
   }
 }

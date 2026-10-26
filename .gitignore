@@ -3,6 +3,9 @@ node_modules/
 dist/
 out/
 
+# 打包产物
+release/
+
 # 本地真实配置（含账号密码，绝不入库）
 zentao.config.json
 config.json
