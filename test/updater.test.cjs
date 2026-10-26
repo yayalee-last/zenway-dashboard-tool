@@ -17,7 +17,7 @@ const originalElectron=Object.getOwnPropertyDescriptor(process.versions,'electro
 before(()=>Object.defineProperty(process.versions,'electron',{value:electronVersion,configurable:true}));
 after(()=>{if(originalElectron)Object.defineProperty(process.versions,'electron',originalElectron);else delete process.versions.electron;});
 
-function temporary(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'zentao-update-test-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true,maxRetries:3}));return dir;}
+function temporary(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'zentao-update-test-'));t.after(()=>fs.promises.rm(dir,{recursive:true,force:true,maxRetries:20,retryDelay:100}));return dir;}
 function writeApp(dir,appVersion=version){fs.mkdirSync(path.join(dir,'electron'),{recursive:true});fs.mkdirSync(path.join(dir,'renderer'),{recursive:true});fs.writeFileSync(path.join(dir,'package.json'),JSON.stringify({name:'zentao-widget',version:appVersion,main:'electron/main.js'}));fs.writeFileSync(path.join(dir,'electron','main.js'),'// fixture');fs.writeFileSync(path.join(dir,'renderer','index.html'),'<title>fixture</title>');}
 async function fixtureServer(t,options={}){
  const payload=Buffer.from('application archive fixture');const root=temporary(t);const requests=[];
