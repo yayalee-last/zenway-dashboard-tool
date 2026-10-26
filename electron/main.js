@@ -10,6 +10,7 @@ app.setName('zentao-widget');
 
 const STATE_DIR = app.getPath('userData');
 const CONFIG_FILE = path.join(STATE_DIR, 'config.json');
+const UPDATE_POLL_MS = 4 * 60 * 60 * 1000; // 常驻不关也要能收到新版本
 
 const DEFAULT_CONFIG = {
   baseUrl: '',
@@ -28,6 +29,7 @@ let tray = null;
 let client = null;
 let config = { ...DEFAULT_CONFIG };
 let timer = null;
+let updateTimer = null;
 let refreshing = false;
 let state = { ok: false, items: [], at: 0, error: null, needSetup: true };
 let updater = null;
@@ -922,6 +924,8 @@ if (!gotLock) {
     // 启动后静默查一次更新；开发模式不查（目录结构跟发布包不一样）
     if (app.isPackaged && config.autoUpdate !== false) {
       setTimeout(() => checkUpdate({ silent: true }), 8000);
+      // 挂件一般常年不关，只查启动那一次会错过新版本，隔 4 小时再看一眼
+      updateTimer = setInterval(() => checkUpdate({ silent: true }), UPDATE_POLL_MS);
     }
 
     if (process.argv.includes('--background')) win.hide();
@@ -934,5 +938,6 @@ if (!gotLock) {
   app.on('before-quit', () => {
     app.__quitting = true;
     clearInterval(timer);
+    clearInterval(updateTimer);
   });
 }

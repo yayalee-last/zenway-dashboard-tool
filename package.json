@@ -8,6 +8,7 @@
     "start": "electron .",
     "pack": "node scripts/pack.mjs",
     "release": "node scripts/release.mjs",
+    "ship": "node scripts/ship.mjs",
     "icon": "node scripts/make-icon.mjs",
     "probe": "node probe.mjs"
   },

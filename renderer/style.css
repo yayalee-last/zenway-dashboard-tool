@@ -1184,6 +1184,30 @@ input::placeholder {
   word-break: break-word;
 }
 
+/* 版本行右侧的「检查更新」，做成看得见的小按钮，别缩成一个灰字 */
+.ver-btn {
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ver-btn:hover:not([disabled]) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(232, 163, 61, 0.1);
+}
+
+.ver-btn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .ver-note[hidden] {
   display: none;
 }

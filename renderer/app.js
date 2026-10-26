@@ -975,6 +975,12 @@ function openSettings() {
   $('f-autoLaunch').checked = Boolean(S.cfg.autoLaunch);
   $('f-autoUpdate').checked = S.cfg.autoUpdate !== false;
   updateNote('');
+  // 后台已经探到新版本的话，打开设置就把话说清楚，别让人自己去猜
+  if (S.up && S.up.hasUpdate && S.up.latest) {
+    updateNote(`发现新版本 ${S.up.latest}，点窗口底部的「更新」就能装`);
+  } else if (S.up && S.up.error) {
+    updateNote(S.up.error, 'fail');
+  }
   renderUpdate();
   $('test-result').hidden = true;
   updateBaseHint();
