@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 自动更新（Gitee Releases）
+ * 自动更新（GitHub Releases）
  *
  * 流程：
  *   1. 拉 releases/latest，比对 tag 与本机版本
@@ -20,7 +20,7 @@ const path = require('node:path');
 const { execFile, spawn } = require('node:child_process');
 
 const DEFAULT_API =
-  'https://gitee.com/api/v5/repos/work_ai_tools/zenway-dashboard-tool/releases/latest';
+  'https://api.github.com/repos/yayalee-last/zenway-dashboard-tool/releases/latest';
 
 const UA = 'zentao-widget-updater';
 
@@ -112,7 +112,7 @@ class Updater {
           };
         }
         if (res.status === 403 || res.status === 429) {
-          return { ok: false, error: 'Gitee 接口调用太频繁，过一会儿再试。', hint: 'rate-limit' };
+          return { ok: false, error: 'GitHub 接口调用太频繁，过一会儿再试。', hint: 'rate-limit' };
         }
         return { ok: false, error: `检查更新失败：HTTP ${res.status}` };
       }
@@ -135,7 +135,7 @@ class Updater {
         latest,
         hasUpdate,
         notes: String(body.body || '').slice(0, 4000),
-        publishedAt: body.created_at || body.released_at || null,
+        publishedAt: body.published_at || body.created_at || null,
         asset: pick ? { name: pick.name, url: pick.browser_download_url, size: Number(pick.size) || 0 } : null,
         assetMissing: hasUpdate && !pick,
       };

@@ -6,40 +6,45 @@
  * 产出：release/ZentaoWidget-win32-x64/   ← 双击 ZentaoWidget.exe 直接跑
  *       release/ZentaoWidget-win32-x64.zip ← 发给同事解压即用
  *
- * 原理：直接复用 node_modules/electron/dist 里现成的运行时，把源码塞进
- * resources/app，再把 electron.exe 改名。不联网、不下载、不依赖打包工具链。
+ * 跨平台：Windows / Linux / macOS 都能跑，支持 GitHub Actions 构建。
+ *   - 运行时   → scripts/electron-dist.mjs 负责拿（本机有就用，没有就下 win32 包）
+ *   - exe 图标 → resedit（纯 JS 改 PE 资源，不需要 wine）
+ *   - 压缩     → archiver（不依赖 PowerShell）
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { ZipArchive } from 'archiver';
+import { ensureWin32Runtime } from './electron-dist.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
-const DIST = path.join(ROOT, 'node_modules', 'electron', 'dist');
 const RELEASE = path.join(ROOT, 'release');
 
 const APP_NAME = 'ZentaoWidget';
 const OUT = path.join(RELEASE, `${APP_NAME}-win32-x64`);
+const ZIP = path.join(RELEASE, `${APP_NAME}-win32-x64.zip`);
 
-/* ---------- 前置检查 ---------- */
+const mb = (n) => (n / 1024 / 1024).toFixed(1) + ' MB';
+const step = (n, msg) => console.log(`[${n}/5] ${msg}`);
 
-if (!fs.existsSync(path.join(DIST, 'electron.exe'))) {
-  console.error('找不到 Electron 运行时：' + DIST);
-  console.error('先执行 npm install，若仍缺失再补跑：');
-  console.error('  set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/');
-  console.error('  node node_modules/electron/install.js');
-  process.exit(1);
-}
+/* ---------- 0. 图标 ---------- */
 
 if (!fs.existsSync(path.join(ROOT, 'assets', 'icon.png'))) {
   console.log('图标缺失，先生成…');
   execFileSync(process.execPath, [path.join(HERE, 'make-icon.mjs')], { stdio: 'inherit' });
 }
 
-/* ---------- 清理 ---------- */
+/* ---------- 1. 运行时 ---------- */
 
+step(1, '准备 Electron 运行时');
+const DIST = await ensureWin32Runtime();
+
+/* ---------- 2. 清理 ---------- */
+
+step(2, '清理旧产物');
 try {
   fs.rmSync(RELEASE, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
 } catch (e) {
@@ -51,15 +56,13 @@ try {
 }
 fs.mkdirSync(RELEASE, { recursive: true });
 
-/* ---------- 1. 复制运行时 ---------- */
+/* ---------- 3. 复制运行时 + 应用代码 ---------- */
 
-console.log('复制 Electron 运行时…');
+step(3, '复制运行时与应用代码');
 fs.cpSync(DIST, OUT, { recursive: true });
 
 // 官方默认应用，留着会干扰启动时对 app 目录的查找
 fs.rmSync(path.join(OUT, 'resources', 'default_app.asar'), { force: true });
-
-/* ---------- 2. 放入应用代码 ---------- */
 
 const APP_DIR = path.join(OUT, 'resources', 'app');
 fs.mkdirSync(APP_DIR, { recursive: true });
@@ -73,48 +76,86 @@ for (const entry of ['electron', 'renderer', 'assets', 'zentao.config.example.js
 
 // 打包后的 package.json 只留运行时必需的字段
 const src = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-const appPkg = {
-  name: src.name,
-  version: src.version,
-  description: src.description,
-  main: src.main,
-};
-fs.writeFileSync(path.join(APP_DIR, 'package.json'), JSON.stringify(appPkg, null, 2));
+fs.writeFileSync(
+  path.join(APP_DIR, 'package.json'),
+  JSON.stringify(
+    { name: src.name, version: src.version, description: src.description, main: src.main },
+    null,
+    2
+  )
+);
 
-/* ---------- 3. 改名 ---------- */
+/* ---------- 4. 改名 + 写图标与版本信息 ---------- */
 
+step(4, '写入 exe 图标与版本信息');
 const exeFrom = path.join(OUT, 'electron.exe');
 const exeTo = path.join(OUT, `${APP_NAME}.exe`);
 fs.renameSync(exeFrom, exeTo);
 
-/* ---------- 3.5 写入 exe 图标与版本信息 ---------- */
-
 const ICO = path.join(ROOT, 'assets', 'icon.ico');
-if (fs.existsSync(path.join(ROOT, 'node_modules', 'rcedit')) && fs.existsSync(ICO)) {
-  console.log('写入 exe 图标与版本信息…');
-  try {
-    const mod = await import('rcedit');
-    const rcedit = mod.rcedit || mod.default;
-    await rcedit(exeTo, {
-      icon: ICO,
-      'file-version': src.version,
-      'product-version': src.version,
-      'version-string': {
+
+/**
+ * 用 resedit 改 PE 资源：纯 JavaScript，Windows / Linux / macOS 结果一致。
+ * 注意 electron.exe 带 Authenticode 签名，解析时必须 ignoreCert，
+ * 生成的二进制签名会失效 —— 绿色版本来就没签名，无影响。
+ */
+async function patchExeRes() {
+  const ResEdit = await import('resedit');
+  const data = fs.readFileSync(exeTo);
+  const exe = ResEdit.NtExecutable.from(data, { ignoreCert: true });
+  const res = ResEdit.NtExecutableResource.from(exe);
+
+  // 图标
+  if (fs.existsSync(ICO)) {
+    const iconFile = ResEdit.Data.IconFile.from(fs.readFileSync(ICO));
+    const groups = ResEdit.Resource.IconGroupEntry.fromEntries(res.entries);
+    const groupId = groups.length ? groups[0].id : 1;
+    ResEdit.Resource.IconGroupEntry.replaceIconsForResource(
+      res.entries,
+      groupId,
+      1033,
+      iconFile.icons.map((i) => i.data)
+    );
+  }
+
+  // 版本信息
+  const ver = String(src.version).split('.').map((n) => Number(n) || 0);
+  while (ver.length < 3) ver.push(0);
+  const viList = ResEdit.Resource.VersionInfo.fromEntries(res.entries);
+  if (viList.length) {
+    const vi = viList[0];
+    vi.setFileVersion(ver[0], ver[1], ver[2], 0, 1033);
+    vi.setStringValues(
+      { lang: 1033, codepage: 1200 },
+      {
         FileDescription: '禅道桌面待办挂件',
         ProductName: '禅道挂件',
+        FileVersion: src.version,
+        ProductVersion: src.version,
         OriginalFilename: `${APP_NAME}.exe`,
         CompanyName: 'work_ai_tools',
-        LegalCopyright: '',
-      },
-    });
-  } catch (e) {
-    console.log('  图标写入失败（不影响运行）：' + (e.message || e));
+      }
+    );
+    vi.outputToResourceEntries(res.entries);
   }
-} else {
-  console.log('跳过图标写入（未安装 rcedit 或缺少 assets/icon.ico）');
+
+  res.outputResource(exe);
+  const out = Buffer.from(exe.generate());
+
+  // 先写临时文件再替换，避免读自己写自己
+  const tmp = exeTo + '.tmp';
+  fs.writeFileSync(tmp, out);
+  fs.renameSync(tmp, exeTo);
 }
 
-/* ---------- 4. 统计 ---------- */
+try {
+  await patchExeRes();
+  console.log(`  ${APP_NAME}.exe  图标/版本已写入`);
+} catch (e) {
+  console.log('  写入失败（不影响运行）：' + (e.message || e));
+}
+
+/* ---------- 5. 统计 + 压缩 ---------- */
 
 function dirSize(dir) {
   let total = 0;
@@ -126,35 +167,24 @@ function dirSize(dir) {
   return total;
 }
 
-const mb = (n) => (n / 1024 / 1024).toFixed(1) + ' MB';
+step(5, '压缩');
 const total = dirSize(OUT);
+console.log(`  目录  ${OUT}`);
+console.log(`  体积  ${mb(total)}`);
 
-console.log('');
-console.log(`输出目录  ${OUT}`);
-console.log(`可执行    ${path.basename(exeTo)}`);
-console.log(`体积      ${mb(total)}`);
-
-/* ---------- 5. 压缩（Windows 才做） ---------- */
-
-if (process.platform === 'win32') {
-  const zip = path.join(RELEASE, `${APP_NAME}-win32-x64.zip`);
-  console.log('压缩中…（约需半分钟）');
-  try {
-    execFileSync(
-      'powershell',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        `Compress-Archive -Path '${OUT}' -DestinationPath '${zip}' -CompressionLevel Optimal -Force`,
-      ],
-      { stdio: 'ignore' }
-    );
-    console.log(`压缩包    ${zip}  ${mb(fs.statSync(zip).size)}`);
-  } catch {
-    console.log('压缩失败（不影响目录版使用），可手动右键压缩 release 目录');
-  }
-}
+await new Promise((resolve, reject) => {
+  const output = fs.createWriteStream(ZIP);
+  const archive = new ZipArchive({ zlib: { level: 6 } });
+  output.on('close', resolve);
+  output.on('warning', (e) => {
+    if (e.code !== 'ENOENT') reject(e);
+  });
+  archive.on('error', reject);
+  archive.pipe(output);
+  archive.directory(OUT, path.basename(OUT));
+  archive.finalize();
+});
+console.log(`  压缩包 ${ZIP}  ${mb(fs.statSync(ZIP).size)}`);
 
 console.log('');
 console.log('完成。双击 ' + path.join(OUT, `${APP_NAME}.exe`) + ' 即可运行。');

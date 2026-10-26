@@ -1,0 +1,28 @@
+name: 打包并发布 Windows 绿色版
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 与原发版约定一致：release: 提交才自动构建；也可手动运行。
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: 安装依赖
+        run: npm ci --no-audit --no-fund
+      - name: 打包 Windows x64
+        run: npm run pack
+      - name: 发布 GitHub Release
+        run: node scripts/release.mjs --skip-pack --note "GitHub Actions 自动打包"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

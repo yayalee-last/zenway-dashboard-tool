@@ -5,6 +5,7 @@ out/
 
 # 打包产物
 release/
+release.bak*/
 
 # 本地真实配置（含账号密码，绝不入库）
 zentao.config.json
@@ -19,3 +20,5 @@ shot*.png
 npm-debug.log*
 .DS_Store
 Thumbs.db
+# 本机助手记忆
+.workbuddy/

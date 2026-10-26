@@ -13,7 +13,9 @@
     "probe": "node probe.mjs"
   },
   "devDependencies": {
+    "archiver": "^8.0.0",
     "electron": "^45.0.0",
-    "rcedit": "^5.0.1"
+    "extract-zip": "^2.0.1",
+    "resedit": "^3.1.0"
   }
 }
