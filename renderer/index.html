@@ -71,6 +71,21 @@
         <div class="dt-foot" id="dt-foot" hidden></div>
       </section>
 
+      <div class="update-bar" id="update-bar" hidden>
+        <span class="ub-ico">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 12.5V3.5M4.6 6.9L8 3.5l3.4 3.4" />
+          </svg>
+        </span>
+        <span class="ub-text" id="ub-text"></span>
+        <button class="ub-btn" id="ub-go">更新</button>
+        <button class="icon ub-close" id="ub-close" title="这次先不管">
+          <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <path d="M4 4l8 8M12 4l-8 8" />
+          </svg>
+        </button>
+      </div>
+
       <footer class="statusbar">
         <span id="status">等待刷新…</span>
         <button class="link" id="btn-settings-link">设置</button>
@@ -126,6 +141,16 @@
             <input id="f-autoLaunch" type="checkbox" />
             <span>开机自启（静默到托盘）</span>
           </label>
+          <label class="check">
+            <input id="f-autoUpdate" type="checkbox" />
+            <span>启动时检查更新</span>
+          </label>
+
+          <div class="ver-line">
+            <span id="ver-text">v—</span>
+            <button class="link" id="btn-check-update">检查更新</button>
+          </div>
+          <div class="ver-note" id="ver-note" hidden></div>
 
           <div class="test-result" id="test-result" hidden></div>
 

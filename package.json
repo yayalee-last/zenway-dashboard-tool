@@ -1,12 +1,13 @@
 {
   "name": "zentao-widget",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "禅道桌面待办挂件",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
     "pack": "node scripts/pack.mjs",
+    "release": "node scripts/release.mjs",
     "icon": "node scripts/make-icon.mjs",
     "probe": "node probe.mjs"
   },

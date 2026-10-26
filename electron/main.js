@@ -4,6 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, screen } = require('electron');
 const { ZentaoClient, normalizeBaseUrl } = require('./zentao');
+const { Updater } = require('./updater');
 
 app.setName('zentao-widget');
 
@@ -18,6 +19,7 @@ const DEFAULT_CONFIG = {
   intervalSec: 180,
   alwaysOnTop: true,
   autoLaunch: false,
+  autoUpdate: true,
   bounds: null,
 };
 
@@ -28,6 +30,18 @@ let config = { ...DEFAULT_CONFIG };
 let timer = null;
 let refreshing = false;
 let state = { ok: false, items: [], at: 0, error: null, needSetup: true };
+let updater = null;
+let update = {
+  checking: false,
+  downloading: false,
+  checkedAt: 0,
+  latest: null,
+  hasUpdate: false,
+  notes: '',
+  asset: null,
+  percent: null,
+  error: null,
+};
 
 /* ---------------- 配置 ---------------- */
 
@@ -169,8 +183,17 @@ function createWindow() {
             await new Promise((r) => setTimeout(r, 500));
           }
           if (process.argv.includes('--bottom')) {
-            await win.webContents.executeJavaScript(`(() => { const b = document.getElementById('dt-body'); if (b) b.scrollTop = b.scrollHeight; })()`);
+            await win.webContents.executeJavaScript(
+              `(() => {
+                 const b = document.getElementById('dt-body'); if (b) b.scrollTop = b.scrollHeight;
+                 const p = document.querySelector('.panel'); if (p) p.scrollTop = p.scrollHeight;
+               })()`
+            );
             await new Promise((r) => setTimeout(r, 300));
+          }
+          if (process.argv.includes('--update')) {
+            await win.webContents.executeJavaScript(`document.getElementById('btn-check-update').click()`);
+            await new Promise((r) => setTimeout(r, 2200));
           }
           const img = await win.capturePage();
           fs.writeFileSync(target, img.toPNG());
@@ -249,6 +272,7 @@ function buildTrayMenu() {
       },
     },
     { type: 'separator' },
+    updateMenuItem(),
     {
       label: '退出',
       click: () => {
@@ -259,19 +283,125 @@ function buildTrayMenu() {
   ]);
 }
 
+function updateMenuItem() {
+  if (update.downloading) {
+    return { label: `正在下载更新… ${update.percent != null ? update.percent + '%' : ''}`, enabled: false };
+  }
+  if (update.checking) return { label: '正在检查更新…', enabled: false };
+  if (update.hasUpdate && update.latest) {
+    return {
+      label: `有新版本 ${update.latest}，去更新`,
+      click: () => {
+        showAndFocus();
+        win?.webContents.send('open-update');
+      },
+    };
+  }
+  return { label: `检查更新（当前 v${app.getVersion()}）`, click: () => checkUpdate() };
+}
+
 function updateTrayMenu() {
   if (!tray) return;
   tray.setContextMenu(buildTrayMenu());
   tray.setToolTip(state.ok ? `禅道挂件 · 未完成 ${state.items.filter((i) => i.status !== 'done').length}` : '禅道挂件 · 未连接');
-}
-
-function createTray() {
+}function createTray() {
   try {
     tray = new Tray(makeTrayIcon());
     tray.on('click', () => toggleWindow());
     updateTrayMenu();
   } catch (e) {
     console.error('[tray] 创建失败', e);
+  }
+}
+
+/* ---------------- 自动更新 ---------------- */
+
+function publicUpdate() {
+  return {
+    current: app.getVersion(),
+    checking: update.checking,
+    downloading: update.downloading,
+    checkedAt: update.checkedAt,
+    latest: update.latest,
+    hasUpdate: update.hasUpdate,
+    notes: update.notes,
+    percent: update.percent,
+    error: update.error,
+  };
+}
+
+function pushUpdate() {
+  if (win && !win.isDestroyed()) win.webContents.send('update', publicUpdate());
+}
+
+async function checkUpdate({ silent = false } = {}) {
+  if (!updater) return publicUpdate();
+  if (update.checking || update.downloading) return publicUpdate();
+
+  update.checking = true;
+  update.error = null;
+  pushUpdate();
+  updateTrayMenu();
+
+  const r = await updater.check();
+  update.checking = false;
+  update.checkedAt = Date.now();
+
+  if (r.ok) {
+    update.latest = r.latest;
+    update.hasUpdate = Boolean(r.hasUpdate);
+    update.notes = r.notes || '';
+    update.asset = r.asset || null;
+    if (r.assetMissing) update.error = `新版本 ${r.latest} 没有附带安装包，去 Gitee 发行版页面手动下载`;
+  } else {
+    update.error = r.error || '检查更新失败';
+  }
+
+  pushUpdate();
+  updateTrayMenu();
+  return publicUpdate();
+}
+
+async function installUpdate() {
+  if (!updater) return { ok: false, error: '当前是开发模式，不能自更新' };
+  if (update.downloading) return { ok: false, error: '正在下载中' };
+  if (!update.asset) return { ok: false, error: '没有可用的更新包' };
+
+  update.downloading = true;
+  update.percent = 0;
+  update.error = null;
+  pushUpdate();
+  updateTrayMenu();
+
+  try {
+    const { zipPath } = await updater.download(update.asset, (p) => {
+      update.percent = p.percent;
+      pushUpdate();
+    });
+
+    // 解压 + 生成替换脚本，成功后才退出自己
+    const { script } = await updater.install(zipPath, update.latest);
+    update.percent = 100;
+    pushUpdate();
+
+    setTimeout(() => {
+      try {
+        updater.launchApply(script);
+      } catch (e) {
+        console.error('[update] 拉起更新脚本失败', e);
+      }
+      app.__quitting = true;
+      app.quit();
+    }, 500);
+
+    return { ok: true };
+  } catch (e) {
+    update.downloading = false;
+    update.percent = null;
+    update.error = e.message || String(e);
+    pushUpdate();
+    updateTrayMenu();
+    return { ok: false, error: update.error };
   }
 }
 
@@ -411,7 +541,19 @@ function showAndFocus() {
 /* ---------------- IPC ---------------- */
 
 function wireIpc() {
-  ipcMain.handle('state:get', () => ({ state, config: publicConfig(), appVersion: app.getVersion() }));
+  ipcMain.handle('state:get', () => ({
+    state,
+    config: publicConfig(),
+    appVersion: app.getVersion(),
+    update: publicUpdate(),
+  }));
+
+  ipcMain.handle('update:check', () => checkUpdate());
+  ipcMain.handle('update:install', () => installUpdate());
+  ipcMain.handle('update:state', () => publicUpdate());
+  ipcMain.handle('update:open-release', () => {
+    shell.openExternal('https://gitee.com/work_ai_tools/zenway-dashboard-tool/releases');
+  });
 
   ipcMain.handle('zentao:refresh', async () => {
     await doRefresh('manual');
@@ -580,11 +722,24 @@ if (!gotLock) {
   app.whenReady().then(() => {
     loadConfig();
     client = new ZentaoClient(config);
+    updater = new Updater({
+      currentVersion: app.getVersion(),
+      stateDir: STATE_DIR,
+      appDir: path.dirname(process.execPath),
+      exeName: path.basename(process.execPath),
+      apiUrl: process.env.ZT_UPDATE_API || config.updateApi || undefined,
+    });
     wireIpc();
     createWindow();
     createTray();
     schedule();
     setTimeout(() => doRefresh('boot'), 400);
+
+    // 启动后静默查一次更新；开发模式不查（目录结构跟发布包不一样）
+    if (app.isPackaged && config.autoUpdate !== false) {
+      setTimeout(() => checkUpdate({ silent: true }), 8000);
+    }
+
     if (process.argv.includes('--background')) win.hide();
   });
 

@@ -20,6 +20,8 @@ const S = {
   st: { ok: false, items: [], at: 0, error: null, needSetup: true },
   filter: 'open',
   spinning: false,
+  up: {},
+  upDismissed: false,
 };
 
 /* ---------------- 工具 ---------------- */
@@ -559,8 +561,85 @@ function renderStatus() {
   $('count').textContent = String(open);
 }
 
+/* ---------------- 更新 ---------------- */
+
+function renderUpdate() {
+  const up = S.up || {};
+  const bar = $('update-bar');
+  const show = Boolean(up.downloading) || (up.hasUpdate && !S.upDismissed);
+  bar.hidden = !show;
+
+  const text = $('ub-text');
+  const go = $('ub-go');
+
+  if (up.downloading) {
+    text.textContent = up.percent != null ? `正在下载更新 ${up.percent}%` : '正在下载更新…';
+    go.hidden = true;
+    go.disabled = true;
+  } else if (show) {
+    text.textContent = `新版本 ${up.latest}（当前 v${up.current || '—'}）`;
+    text.title = up.notes || '';
+    go.hidden = false;
+    go.disabled = false;
+    go.textContent = '更新';
+  }
+
+  // 设置面板里那行版本号
+  const ver = $('ver-text');
+  if (ver) ver.textContent = `当前版本 v${up.current || '—'}`;
+}
+
+function updateNote(msg, kind) {
+  const box = $('ver-note');
+  if (!box) return;
+  box.hidden = !msg;
+  box.className = `ver-note${kind === 'fail' ? ' fail' : ''}`;
+  box.textContent = msg || '';
+}
+
+async function checkUpdateManual() {
+  const btn = $('btn-check-update');
+  btn.disabled = true;
+  btn.textContent = '检查中…';
+  updateNote('');
+  try {
+    const r = await window.zt.checkUpdate();
+    S.up = r;
+    renderUpdate();
+    if (r.error) updateNote(r.error, 'fail');
+    else if (r.hasUpdate) updateNote(`发现新版本 ${r.latest}，点底部「更新」即可`);
+    else updateNote(`已是最新版本（v${r.current}）`);
+  } catch (e) {
+    updateNote(String(e.message || e), 'fail');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '检查更新';
+  }
+}
+
+async function doInstallUpdate() {
+  const go = $('ub-go');
+  go.disabled = true;
+  go.textContent = '准备中…';
+  try {
+    const r = await window.zt.installUpdate();
+    if (!r.ok) {
+      toast(r.error || '更新失败', 'bad');
+      go.disabled = false;
+      go.textContent = '更新';
+      return;
+    }
+    toast('下载完成，正在替换文件并重启…', 'ok');
+  } catch (e) {
+    toast(String(e.message || e), 'bad');
+    go.disabled = false;
+    go.textContent = '更新';
+  }
+}
+
 function renderAll() {
   renderStatus();
+  renderUpdate();
   syncPin();
   if (DT.open) return;
   renderList();
@@ -569,6 +648,8 @@ function renderAll() {
 
 /** 窗口高度跟着内容走，别留一大片空 */
 function autoHeight() {
+  // 弹层打开时窗口尺寸由弹层自己定，别让列表把它缩回去
+  if (!$('modal').hidden || !$('task-modal').hidden) return;
   const list = $('list');
   let content;
   if (list.querySelector('.empty')) {
@@ -577,7 +658,7 @@ function autoHeight() {
     content = 0;
     for (const child of list.children) content += child.offsetHeight + 4;
   }
-  const chrome = 42 + 34 + 30 + 10; // titlebar + tabs + statusbar + 内边距
+  const chrome = 42 + 34 + 30 + 10 + ($('update-bar').hidden ? 0 : $('update-bar').offsetHeight); // titlebar + tabs + statusbar + 内边距 + 更新条
   window.zt.resize(Math.ceil(content + chrome));
 }
 
@@ -603,6 +684,7 @@ function apply(payload) {
   if (!payload) return;
   if (payload.config) S.cfg = payload.config;
   if (payload.state) S.st = payload.state;
+  if (payload.update) S.up = payload.update;
   S.items = Array.isArray(S.st.items) ? S.st.items : [];
   renderAll();
   if (S.cfg.baseUrl && !S.cfg.account && !$('modal').hidden) {
@@ -625,9 +707,14 @@ function openSettings() {
   $('f-urlMode').value = S.cfg.urlMode || 'path';
   $('f-alwaysOnTop').checked = Boolean(S.cfg.alwaysOnTop);
   $('f-autoLaunch').checked = Boolean(S.cfg.autoLaunch);
+  $('f-autoUpdate').checked = S.cfg.autoUpdate !== false;
+  updateNote('');
+  renderUpdate();
   $('test-result').hidden = true;
   updateBaseHint();
   $('modal').hidden = false;
+  // 设置面板比列表高不少，临时把窗口撑开，别让「保存」掉到滚动区外面
+  window.zt.resize(660);
   $('f-baseUrl').focus();
 }
 
@@ -661,6 +748,7 @@ function updateBaseHint() {
 
 function closeSettings() {
   $('modal').hidden = true;
+  requestAnimationFrame(autoHeight);
 }
 
 function readForm() {
@@ -672,6 +760,7 @@ function readForm() {
     urlMode: $('f-urlMode').value,
     alwaysOnTop: $('f-alwaysOnTop').checked,
     autoLaunch: $('f-autoLaunch').checked,
+    autoUpdate: $('f-autoUpdate').checked,
   };
 }
 
@@ -780,6 +869,25 @@ function bind() {
     renderAll();
   });
   window.zt.onOpenSettings(openSettings);
+
+  // 更新相关
+  $('btn-check-update').addEventListener('click', checkUpdateManual);
+  $('ub-go').addEventListener('click', doInstallUpdate);
+  $('ub-close').addEventListener('click', () => {
+    S.upDismissed = true;
+    renderUpdate();
+    requestAnimationFrame(autoHeight);
+  });
+  window.zt.onUpdate((s) => {
+    S.up = s;
+    renderUpdate();
+    requestAnimationFrame(autoHeight);
+  });
+  window.zt.onOpenUpdate(() => {
+    S.upDismissed = false;
+    renderUpdate();
+    requestAnimationFrame(autoHeight);
+  });
 }
 
 (async function init() {

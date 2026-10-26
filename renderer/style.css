@@ -1089,3 +1089,105 @@ input::placeholder {
 .dt-desc .imgph:hover .imgph-open {
   color: var(--accent);
 }
+
+/* ---------- 更新条 ---------- */
+
+.update-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px 6px 10px;
+  background: linear-gradient(90deg, rgba(232, 163, 61, 0.16), rgba(232, 163, 61, 0.05));
+  border-top: 1px solid rgba(232, 163, 61, 0.28);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.update-bar[hidden] {
+  display: none;
+}
+
+.ub-ico {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: rgba(232, 163, 61, 0.2);
+  color: var(--accent);
+}
+
+.ub-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ub-btn {
+  flex: none;
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #1a1206;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ub-btn[hidden] {
+  display: none;
+}
+
+.ub-btn:hover {
+  filter: brightness(1.08);
+}
+
+.ub-btn[disabled] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ub-close {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--text-faint);
+}
+
+.ub-close:hover {
+  color: var(--text-dim);
+}
+
+/* ---------- 设置里的版本行 ---------- */
+
+.ver-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.ver-note {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+.ver-note[hidden] {
+  display: none;
+}
+
+.ver-note.fail {
+  color: #e06a5f;
+}

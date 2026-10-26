@@ -14,6 +14,11 @@ contextBridge.exposeInMainWorld('zt', {
   resize: (h) => ipcRenderer.invoke('win:resize', h),
   quit: () => ipcRenderer.invoke('win:close'),
   togglePin: () => ipcRenderer.invoke('win:toggle-pin'),
+  checkUpdate: () => ipcRenderer.invoke('update:check'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  openRelease: () => ipcRenderer.invoke('update:open-release'),
   onState: (fn) => ipcRenderer.on('state', (_e, s) => fn(s)),
   onOpenSettings: (fn) => ipcRenderer.on('open-settings', () => fn()),
+  onUpdate: (fn) => ipcRenderer.on('update', (_e, s) => fn(s)),
+  onOpenUpdate: (fn) => ipcRenderer.on('open-update', () => fn()),
 });
