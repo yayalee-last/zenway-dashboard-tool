@@ -88,6 +88,20 @@ app.whenReady().then(async () => {
     assert.equal(win.isAlwaysOnTop(), true, 'second instance/settings restore must reapply pin');
     snapshot('after-tray-restore');
 
+    const sendRelease = async (version, hasUpdate = true) => {
+      win.webContents.send('update', { current: '0.3.4', latest: version, hasUpdate });
+      await pause(50);
+    };
+    const barHidden = () => win.webContents.executeJavaScript("document.getElementById('update-bar').hidden");
+    await sendRelease('v0.3.5');
+    assert.equal(await barHidden(), false, 'detected release must show the bottom bar');
+    await win.webContents.executeJavaScript("document.getElementById('ub-close').click()");
+    await sendRelease('v0.3.5');
+    assert.equal(await barHidden(), true, 'same release must respect dismissal');
+    await sendRelease('v0.3.6');
+    assert.equal(await barHidden(), false, 'a newer release must become visible again');
+    await sendRelease('v0.3.6', false);
+
     const refreshedAt = main.exports.getState().at;
     await pause(31000);
     assert(main.exports.getState().at > refreshedAt, 'scheduled refresh must have run');

@@ -1167,6 +1167,7 @@ function bind() {
     requestAnimationFrame(autoHeight);
   });
   window.zt.onUpdate((s) => {
+    if (s.hasUpdate && s.latest !== S.up?.latest) S.upDismissed = false;
     S.up = s;
     renderUpdate();
     requestAnimationFrame(autoHeight);

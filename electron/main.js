@@ -10,7 +10,7 @@ app.setName('zentao-widget');
 
 const STATE_DIR = app.getPath('userData');
 const CONFIG_FILE = path.join(STATE_DIR, 'config.json');
-const UPDATE_POLL_MS = 4 * 60 * 60 * 1000; // 常驻不关也要能收到新版本
+const UPDATE_POLL_MS = 5 * 60 * 1000; // 常驻时每 5 分钟自动检测新版本
 
 const DEFAULT_CONFIG = {
   baseUrl: '',
@@ -382,6 +382,20 @@ function pushUpdate() {
   if (win && !win.isDestroyed()) win.webContents.send('update', publicUpdate());
 }
 
+function scheduleUpdateChecks(delay = 8000) {
+  clearTimeout(updateTimer);
+  updateTimer = null;
+  if (!app.isPackaged || config.autoUpdate === false || app.__quitting) return;
+  updateTimer = setTimeout(async () => {
+    updateTimer = null;
+    try {
+      await checkUpdate({ silent: true });
+    } finally {
+      scheduleUpdateChecks(UPDATE_POLL_MS);
+    }
+  }, delay);
+}
+
 async function checkUpdate({ silent = false } = {}) {
   if (!updater) return publicUpdate();
   if (update.checking || update.downloading) return publicUpdate();
@@ -391,7 +405,12 @@ async function checkUpdate({ silent = false } = {}) {
   pushUpdate();
   updateTrayMenu();
 
-  const r = await updater.check();
+  let r;
+  try {
+    r = await updater.check();
+  } catch (e) {
+    r = { ok: false, error: e.message || String(e) };
+  }
   update.checking = false;
   update.checkedAt = Date.now();
 
@@ -647,12 +666,14 @@ function wireIpc() {
   });
 
   ipcMain.handle('config:save', async (_e, patch) => {
+    const autoUpdateWasEnabled = config.autoUpdate !== false;
     if (patch && typeof patch.baseUrl === 'string') patch.baseUrl = normalizeBaseUrl(patch.baseUrl);
     saveConfig(patch);
     client.applyConfig(config);
     if ('autoLaunch' in patch) app.setLoginItemSettings({ openAtLogin: Boolean(patch.autoLaunch), args: ['--background'] });
     syncWindowPin();
     schedule();
+    if (autoUpdateWasEnabled !== (config.autoUpdate !== false)) scheduleUpdateChecks(0);
     client.projectCache = null;
     client.execCache = null;
     client.productCache = null;
@@ -933,12 +954,7 @@ if (!gotLock) {
     schedule();
     setTimeout(() => doRefresh('boot'), 400);
 
-    // 启动后静默查一次更新；开发模式不查（目录结构跟发布包不一样）
-    if (app.isPackaged && config.autoUpdate !== false) {
-      setTimeout(() => checkUpdate({ silent: true }), 8000);
-      // 挂件一般常年不关，只查启动那一次会错过新版本，隔 4 小时再看一眼
-      updateTimer = setInterval(() => checkUpdate({ silent: true }), UPDATE_POLL_MS);
-    }
+    scheduleUpdateChecks();
 
     if (process.argv.includes('--background')) win.hide();
   });
@@ -950,6 +966,6 @@ if (!gotLock) {
   app.on('before-quit', () => {
     app.__quitting = true;
     clearInterval(timer);
-    clearInterval(updateTimer);
+    clearTimeout(updateTimer);
   });
 }
