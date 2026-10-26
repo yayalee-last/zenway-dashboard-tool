@@ -107,7 +107,7 @@ class Updater {
         if (res.status === 404 || /Not Found/i.test(msg || '')) {
           return {
             ok: false,
-            error: '取不到发行版信息。仓库可能还是私有的，或还没有发布过 Release。',
+            error: '仓库里还没有发布过 Release（或仓库仍是私有）。发一次带 zip 的发行版，客户端才收得到更新。',
             hint: 'private-or-empty',
           };
         }
