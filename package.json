@@ -1,6 +1,6 @@
 {
   "name": "zentao-widget",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "禅道桌面待办挂件",
   "main": "electron/main.js",
