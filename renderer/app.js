@@ -853,6 +853,7 @@ function renderUpdate() {
   // 设置面板里那行版本号
   const ver = $('ver-text');
   if (ver) ver.textContent = `当前版本 v${up.current || '—'}`;
+  $('btn-settings-link').textContent = up.current ? `设置 · v${up.current}` : '设置';
 }
 
 function openUpdate() {
