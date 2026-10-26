@@ -1,0 +1,13 @@
+{
+  "baseUrl": "http://your-zentao-host/zentao",
+  "account": "你的禅道登录账号",
+  "password": "你的禅道登录密码",
+  "urlMode": "get",
+  "intervalSec": 180,
+  "concurrency": 8,
+  "timeoutMs": 15000,
+  "maxExecutions": 120,
+  "alwaysOnTop": true,
+  "autoLaunch": false,
+  "bounds": null
+}

@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data: http: https:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    />
+    <link rel="stylesheet" href="style.css" />
+    <title>禅道挂件</title>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="titlebar">
+        <div class="brand">
+          <span class="dot"></span>
+          <span class="title">禅道</span>
+          <span class="count" id="count">0</span>
+        </div>
+        <div class="actions">
+          <button class="icon" id="btn-pin" title="窗口置顶">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 2.6v10M4.6 6L8 2.6 11.4 6M3.4 13.4h9.2" />
+            </svg>
+          </button>
+          <button class="icon" id="btn-refresh" title="刷新">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+              <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.2v3h-3" />
+            </svg>
+          </button>
+          <button class="icon" id="btn-set" title="设置">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+              <circle cx="8" cy="8" r="2.1" />
+              <path d="M8 1.6v1.7M8 12.7v1.7M1.6 8h1.7M12.7 8h1.7M3.5 3.5l1.2 1.2M11.3 11.3l1.2 1.2M12.5 3.5l-1.2 1.2M4.7 11.3l-1.2 1.2" />
+            </svg>
+          </button>
+          <button class="icon danger" id="btn-hide" title="收起（托盘常驻）">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+              <path d="M3 12h10" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <nav class="tabs" id="tabs">
+        <button class="tab active" data-filter="open">未完成</button>
+        <button class="tab" data-filter="overdue">逾期</button>
+        <button class="tab" data-filter="today">今天</button>
+        <button class="tab" data-filter="all">全部</button>
+      </nav>
+
+      <main class="list" id="list"></main>
+
+      <section class="detail" id="detail" hidden>
+        <div class="dt-head">
+          <button class="icon" id="dt-back" title="返回列表（Esc）">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9.5 3.5L5 8l4.5 4.5" />
+            </svg>
+          </button>
+          <span class="dt-id" id="dt-id"></span>
+          <div class="dt-tools">
+            <button class="icon" id="dt-open" title="在浏览器打开">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9.5 3h3.5v3.5M12.6 3.4L7.8 8.2M12 9.4v3.1a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-8a.5.5 0 0 1 .5-.5h3.1" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="dt-body" id="dt-body"></div>
+        <div class="dt-foot" id="dt-foot" hidden></div>
+      </section>
+
+      <footer class="statusbar">
+        <span id="status">等待刷新…</span>
+        <button class="link" id="btn-settings-link">设置</button>
+      </footer>
+
+      <div class="modal" id="modal" hidden>
+        <div class="panel">
+          <div class="panel-head">
+            <span>连接禅道</span>
+            <button class="icon" id="btn-close-modal">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+          </div>
+
+          <label class="field">
+            <span>禅道地址</span>
+            <input id="f-baseUrl" type="text" placeholder="http://your-zentao-host/zentao" spellcheck="false" />
+            <em class="hint" id="base-hint">只填到端口/部署目录，index.php 会自动去掉</em>
+          </label>
+
+          <div class="row">
+            <label class="field">
+              <span>账号</span>
+              <input id="f-account" type="text" spellcheck="false" />
+            </label>
+            <label class="field">
+              <span>密码</span>
+              <input id="f-password" type="password" />
+            </label>
+          </div>
+
+          <div class="row">
+            <label class="field">
+              <span>刷新间隔（秒）</span>
+              <input id="f-intervalSec" type="number" min="30" step="30" />
+            </label>
+            <label class="field">
+              <span>链接格式</span>
+              <select id="f-urlMode">
+                <option value="path">/task-view-1.html</option>
+                <option value="get">index.php?m=task…</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="check">
+            <input id="f-alwaysOnTop" type="checkbox" />
+            <span>窗口置顶</span>
+          </label>
+          <label class="check">
+            <input id="f-autoLaunch" type="checkbox" />
+            <span>开机自启（静默到托盘）</span>
+          </label>
+
+          <div class="test-result" id="test-result" hidden></div>
+
+          <div class="panel-foot">
+            <button class="btn ghost" id="btn-test">测试连接</button>
+            <button class="btn primary" id="btn-save">保存并刷新</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal" id="task-modal" hidden>
+        <div class="panel tight">
+          <div class="panel-head">
+            <span id="tm-title">开始任务</span>
+            <button class="icon" id="tm-close">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+          </div>
+          <div class="tm-task" id="tm-task"></div>
+          <div class="row">
+            <label class="field">
+              <span id="tm-consumed-label">预计消耗（小时）</span>
+              <input id="tm-consumed" type="number" step="0.5" min="0" />
+            </label>
+            <label class="field">
+              <span>剩余工时（小时）</span>
+              <input id="tm-left" type="number" step="0.5" min="0" />
+            </label>
+          </div>
+          <div class="test-result fail" id="tm-err" hidden></div>
+          <div class="panel-foot">
+            <button class="btn ghost" id="tm-cancel">取消</button>
+            <button class="btn primary" id="tm-ok">确认</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="toast" id="toast" hidden></div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

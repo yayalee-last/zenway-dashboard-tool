@@ -1,0 +1,18 @@
+# 依赖
+node_modules/
+dist/
+out/
+
+# 本地真实配置（含账号密码，绝不入库）
+zentao.config.json
+config.json
+**/config.json
+*.local.json
+
+# 运行时产物 / 调试截图
+probe-result.json
+shot*.png
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
