@@ -99,6 +99,13 @@ function makeTrayIcon() {
 
 /* ---------------- 窗口 ---------------- */
 
+function syncWindowPin() {
+  if (!win || win.isDestroyed()) return;
+  // floating 会在 Windows 上重新排到任务栏之后，任务栏降层时也会让挂件失去置顶。
+  const level = process.platform === 'win32' ? 'pop-up-menu' : 'floating';
+  win.setAlwaysOnTop(Boolean(config.alwaysOnTop), level);
+}
+
 function createWindow() {
   const shotArg = process.argv.find((a) => a.startsWith('--shot='));
   const area = screen.getPrimaryDisplay().workArea;
@@ -135,7 +142,7 @@ function createWindow() {
     },
   });
 
-  if (config.alwaysOnTop) win.setAlwaysOnTop(true, 'floating');
+  syncWindowPin();
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), process.argv.includes('--setup') ? { query: { setup: '1' } } : undefined);
 
   // 描述里的链接一律丢给系统浏览器，别让挂件自己跑过去
@@ -251,9 +258,9 @@ function createWindow() {
     }
   });
 
-  win.on('blur', () => {
-    if (!config.alwaysOnTop) return;
-  });
+  win.on('show', syncWindowPin);
+  win.on('restore', syncWindowPin);
+  win.on('blur', syncWindowPin);
 }
 
 function toggleWindow() {
@@ -284,7 +291,7 @@ function buildTrayMenu() {
       checked: Boolean(config.alwaysOnTop),
       click: (item) => {
         saveConfig({ alwaysOnTop: item.checked });
-        win?.setAlwaysOnTop(item.checked, 'floating');
+        syncWindowPin();
         updateTrayMenu();
       },
     },
@@ -603,6 +610,7 @@ function schedule() {
 function showAndFocus() {
   if (!win) return createWindow();
   if (!win.isVisible()) win.show();
+  syncWindowPin();
   win.focus();
 }
 
@@ -643,7 +651,7 @@ function wireIpc() {
     saveConfig(patch);
     client.applyConfig(config);
     if ('autoLaunch' in patch) app.setLoginItemSettings({ openAtLogin: Boolean(patch.autoLaunch), args: ['--background'] });
-    if (win) win.setAlwaysOnTop(Boolean(config.alwaysOnTop), 'floating');
+    syncWindowPin();
     schedule();
     client.projectCache = null;
     client.execCache = null;
@@ -895,7 +903,7 @@ function wireIpc() {
   });
   ipcMain.handle('win:toggle-pin', () => {
     saveConfig({ alwaysOnTop: !config.alwaysOnTop });
-    win?.setAlwaysOnTop(Boolean(config.alwaysOnTop), 'floating');
+    syncWindowPin();
     updateTrayMenu();
     return config.alwaysOnTop;
   });

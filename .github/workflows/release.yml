@@ -20,8 +20,8 @@ jobs:
           cache: npm
       - name: 安装依赖
         run: npm ci --no-audit --no-fund
-      - name: 验证更新流程
-        run: node --test test/updater.test.cjs
+      - name: 验证更新与窗口行为
+        run: node --test test/updater.test.cjs test/window.test.cjs
       - name: 打包 Windows x64
         run: npm run pack
       - name: 发布 GitHub Release
