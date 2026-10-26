@@ -40,7 +40,15 @@ if (!fs.existsSync(path.join(ROOT, 'assets', 'icon.png'))) {
 
 /* ---------- 清理 ---------- */
 
-fs.rmSync(RELEASE, { recursive: true, force: true });
+try {
+  fs.rmSync(RELEASE, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+} catch (e) {
+  console.error('清不掉旧的 release 目录，通常是有程序正在跑：');
+  console.error('  1) 关掉托盘里的「禅道挂件」');
+  console.error('  2) 任务管理器里结束 ZentaoWidget.exe');
+  console.error(`  原始错误：${e.code || ''} ${e.message || e}`);
+  process.exit(1);
+}
 fs.mkdirSync(RELEASE, { recursive: true });
 
 /* ---------- 1. 复制运行时 ---------- */
