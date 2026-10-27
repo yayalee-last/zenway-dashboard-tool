@@ -168,10 +168,11 @@ function renderItem(it) {
   const body = el('div', 'body');
   const head = el('div', 'head');
 
-  // 有父任务、或者自己是父任务 → 能展开看这一组的子任务
-  if (it.parent > 0 || it.isParent > 0) {
+  // 已知父子关系直接展开该组；列表未提供 children 时仍允许按需查看，
+  // 不为了发现缺失的父任务标记而给每条列表自动请求详情。
+  if (it.parent > 0 || Number(it.parent) === -1 || it.isParent > 0 || it.childrenState !== 'supplied') {
     const exp = el('button', 'expander');
-    exp.title = '展开子任务';
+    exp.title = '查看子任务（本次接口可见范围）';
     exp.addEventListener('click', (e) => {
       e.stopPropagation();
       toggleTree(row, it, exp);
@@ -293,7 +294,21 @@ function taskUrl(id) {
 
 /* ---------------- 展开子任务 ---------------- */
 
+function childSummary(child) {
+  const status = String(child.status || '').toLowerCase();
+  const owner = child.realname || child.account || '负责人未知';
+  return `${child.isMine === true ? '我' : '参考'} · ${owner} · ${STATUS_LABEL[status] || child.status || '状态未知'} · 剩${child.left || 0}h`;
+}
+
+function childrenNotice(task) {
+  if (task.childrenState === 'partial') return '部分子任务数据无法识别；仅展示本次可读取的条目，请在禅道网页核对';
+  if (task.childrenState !== 'supplied') return '接口未返回子任务数据，无法确认是否为空；请在禅道网页核对';
+  if (!task.children.length) return '本次接口返回 0 条子任务（权限范围内）';
+  return '';
+}
+
 async function toggleTree(row, it, btn) {
+  if (btn.disabled) return;
   const next = row.nextElementSibling;
   if (next && next.classList.contains('subs')) {
     next.remove();
@@ -303,16 +318,21 @@ async function toggleTree(row, it, btn) {
   }
 
   btn.disabled = true;
-  const pid = it.isParent > 0 ? it.id : it.parent;
-  const r = await window.zt.taskDetail(pid);
-  btn.disabled = false;
+  const pid = it.parent > 0 && !(it.isParent > 0) ? it.parent : it.id;
+  let r;
+  try {
+    r = await window.zt.taskDetail(pid);
+  } catch {
+    r = { ok: false, error: '拉取子任务失败，请重试' };
+  } finally {
+    btn.disabled = false;
+  }
+  if (!row.isConnected) return;
 
   if (!r.ok) return toast(r.error || '拉取子任务失败', 'bad');
 
-  // 只留派给自己的，并且把当前这一行本身剔掉（否则会重复显示自己）
+  // 服务端本次返回的可见子任务都展示；当前行本身不重复，且不并入个人待办。
   const kids = (r.task.children || []).filter((c) => c.id !== it.id);
-  const others = Number(r.task.othersCount) || 0;
-  if (!kids.length && !others) return toast('这一组没有子任务');
 
   const box = el('div', 'subs');
 
@@ -331,10 +351,10 @@ async function toggleTree(row, it, btn) {
   for (const c of kids) {
     const st = String(c.status || '').toLowerCase();
     const line = el('div', 'sub');
-    line.title = `${c.name}\n${c.realname || c.account || ''}`;
+    line.title = `${c.name}\n${childSummary(c)}`;
     line.append(el('span', `sdot ${st}`, ''));
     line.append(el('span', 'sname', c.name));
-    line.append(el('span', 'swho', c.left > 0 ? `剩${c.left}h · ${STATUS_LABEL[st] || c.status}` : STATUS_LABEL[st] || c.status));
+    line.append(el('span', 'swho', childSummary(c)));
     line.addEventListener('click', (e) => {
       e.stopPropagation();
       window.zt.open(c.url || taskUrl(c.id));
@@ -342,12 +362,10 @@ async function toggleTree(row, it, btn) {
     box.append(line);
   }
 
-  // 别人的子任务不列出来，但给一句可点的提示，别让人以为漏了
-  if (others > 0) {
+  const notice = childrenNotice(r.task);
+  if (notice) {
     const more = el('div', 'sub more');
-    more.textContent = kids.length
-      ? `另有 ${others} 条派给别人的子任务，去禅道看`
-      : `同组还有 ${others} 条派给别人的子任务，去禅道看`;
+    more.textContent = notice;
     more.addEventListener('click', (e) => {
       e.stopPropagation();
       window.zt.open(taskUrl(pid));
@@ -365,6 +383,7 @@ async function toggleTree(row, it, btn) {
 let pending = null;
 
 function openTaskAction(action, it) {
+  if (it.readOnly === true || it.isMine === false) return toast('参考任务只读，请在禅道网页处理', 'bad');
   pending = { action, it };
   const finishing = action === 'finish';
   const closing = action === 'close';
@@ -479,7 +498,7 @@ async function confirmBugAction() {
 
 /* ---------------- 任务详情（挂件内直接看） ---------------- */
 
-const DT = { open: false, kind: 'task', id: 0, data: null };
+const DT = { open: false, kind: 'task', id: 0, data: null, request: 0 };
 
 function fmtDT(v) {
   if (!v) return '';
@@ -519,9 +538,18 @@ async function loadBugDetail(id) {
 }
 
 async function loadDetail(id) {
-  const r = await window.zt.taskDetail(id);
-  if (!DT.open || DT.id !== id) return;
+  if (!DT.open || DT.kind !== 'task' || DT.id !== id) return;
+  const request = ++DT.request;
+  $('dt-foot').hidden = true;
+  let r;
+  try {
+    r = await window.zt.taskDetail(id);
+  } catch {
+    r = { ok: false, error: '读取任务失败，请重试' };
+  }
+  if (!DT.open || DT.kind !== 'task' || DT.id !== id || DT.request !== request) return;
   if (!r.ok) {
+    DT.data = null;
     $('dt-body').replaceChildren(el('div', 'dt-empty', r.error || '读取失败'));
     return;
   }
@@ -531,6 +559,7 @@ async function loadDetail(id) {
 
 function closeDetail() {
   DT.open = false;
+  DT.request++;
   DT.kind = 'task';
   DT.data = null;
   $('detail').hidden = true;
@@ -614,6 +643,7 @@ function renderDetail(t) {
 
   const badges = el('div', 'dt-badges');
   badges.append(el('span', `tag ${st}`, STATUS_LABEL[st] || t.status || ''));
+  if (t.readOnly !== false || t.isMine !== true) badges.append(el('span', 'tag reference', '参考 · 只读'));
 
   const pri = el('span', 'pri-dot');
   pri.dataset.pri = String(t.pri || 0);
@@ -636,7 +666,7 @@ function renderDetail(t) {
   };
   kv('所属迭代', t.executionName);
   kv('模块', t.moduleTitle);
-  kv('指派给', t.assignedRealname);
+  kv('指派给', t.assignedRealname || '负责人未知');
   kv('工时 预计/已耗/剩', `${t.estimate || 0} / ${t.consumed || 0} / ${t.left || 0} h`, true);
   kv('截止', t.deadline || '未设置');
   kv('创建', `${t.openedBy || ''}${t.openedDate ? ` · ${fmtDT(t.openedDate)}` : ''}`);
@@ -646,10 +676,10 @@ function renderDetail(t) {
   if (grid.children.length) body.append(grid);
 
   // 父任务
-  if (t.parentName) {
+  if (t.parent > 0) {
     body.append(el('div', 'dt-h', '父任务'));
     const up = el('div', 'dt-sub');
-    up.append(el('span', 'sname', t.parentName));
+    up.append(el('span', 'sname', t.parentName || `#${t.parent}`));
     up.append(el('span', 'swho', '点开'));
     up.addEventListener('click', () => openDetail({ id: t.parent }));
     body.append(up);
@@ -670,20 +700,19 @@ function renderDetail(t) {
 
   // 子任务
   if (t.children && t.children.length) {
-    body.append(el('div', 'dt-h', `子任务 ${t.children.length}`));
+    body.append(el('div', 'dt-h', `子任务（本次可见 ${t.children.length}）`));
     for (const c of t.children) {
       const cst = String(c.status || '').toLowerCase();
-      const line = el('div', 'dt-sub');
+      const line = el('div', 'dt-sub task-child');
       line.append(el('span', `sdot ${cst}`, ''));
       line.append(el('span', 'sname', c.name));
-      line.append(el('span', 'swho', c.left > 0 ? `剩${c.left}h · ${STATUS_LABEL[cst] || c.status}` : STATUS_LABEL[cst] || c.status));
+      line.append(el('span', 'swho', childSummary(c)));
       line.addEventListener('click', () => openDetail({ id: c.id }));
       body.append(line);
     }
-  } else if (t.othersCount > 0) {
-    body.append(el('div', 'dt-h', '子任务'));
-    body.append(el('div', 'dt-empty', `另有 ${t.othersCount} 条子任务派给别人`));
   }
+  const notice = childrenNotice(t);
+  if (notice) body.append(el('div', 'dt-empty', notice));
 
   // 动态
   if (t.history && t.history.length) {
@@ -709,7 +738,7 @@ function renderDetail(t) {
   foot.replaceChildren();
   const act = st === 'wait' ? ['start', '开始任务'] : st === 'doing' ? ['finish', '完成任务']
     : st === 'done' ? ['close', '关闭任务'] : null;
-  if (act) {
+  if (act && t.isMine === true && t.readOnly === false) {
     const b = el('button', 'btn primary', act[1]);
     b.addEventListener('click', () => openTaskAction(act[0], t));
     foot.append(b);

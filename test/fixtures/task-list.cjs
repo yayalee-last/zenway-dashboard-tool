@@ -33,7 +33,11 @@ ipcMain.handle('config:save', (_event, patch) => {
   fs.writeFileSync(path.join(profile, 'config.json'), JSON.stringify(config));
   return boot();
 });
-ipcMain.handle('task:detail', (_event, id) => ({ ok: true, task: { ...items.find(item => item.id === id), desc: '<p>隔离界面检查</p>' } }));
+ipcMain.handle('task:detail', (_event, id) => ({ ok: true, task: {
+  ...items.find(item => item.id === id), desc: '<p>隔离界面检查</p>',
+  assignedRealname: config.account, isMine: true, readOnly: false,
+  childrenState: 'supplied', children: [],
+} }));
 ipcMain.handle('task:action', (_event, action) => {
   writes.push(action);
   assert.equal(action.action, 'close');

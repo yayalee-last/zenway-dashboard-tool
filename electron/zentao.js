@@ -23,6 +23,7 @@ const DEFAULTS = {
 };
 
 const CLOSED_EXEC = new Set(['closed', 'suspended']);
+const { taskChildren, isParentTask } = require('./task-context');
 
 /** 缺陷列表每页固定 20 条（recPerPage 传多大都没用） */
 const BUG_PAGE_SIZE = 20;
@@ -384,7 +385,8 @@ class ZentaoClient {
       execution: execName || null,
       project: projectName || null,
       parent: Number(t.parent) || 0,
-      isParent: Number(t.isParent) || 0,
+      isParent: isParentTask(t) ? 1 : 0,
+      childrenState: taskChildren(t).state,
       url: this.taskUrl(t.id),
     };
   }

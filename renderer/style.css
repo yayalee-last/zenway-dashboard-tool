@@ -813,6 +813,20 @@ input::placeholder {
   color: var(--text-faint);
 }
 
+.sub .swho,
+.dt-sub.task-child .swho {
+  max-width: 52%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: right;
+  line-height: 1.45;
+}
+
+.sub.more {
+  white-space: normal;
+  line-height: 1.5;
+}
+
 /* ---------- 工时弹窗 ---------- */
 
 .panel.tight {
