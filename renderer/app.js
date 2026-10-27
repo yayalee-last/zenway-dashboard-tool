@@ -102,6 +102,16 @@ function el(tag, cls, text) {
   return n;
 }
 
+function glyph(name, cls = '') {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', `glyph ${cls}`.trim());
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', `#i-${name}`);
+  svg.append(use);
+  return svg;
+}
+
 /* ---------------- 渲染 ---------------- */
 
 function visibleItems() {
@@ -151,7 +161,7 @@ function renderList() {
     list.append(
       S.items.length
         ? renderEmpty('这一栏是空的', '切到别的分栏看看', null)
-        : renderEmpty('没有代办', '安心干活', null)
+        : renderEmpty('没有待办', '安心干活', null)
     );
   } else {
     list.append(renderEmpty('这一栏是空的', '切到「未完成」看看', null));
@@ -160,6 +170,9 @@ function renderList() {
 
 function renderEmpty(title, sub, btnText) {
   const box = el('div', 'empty');
+  const mark = el('div', 'empty-mark');
+  mark.append(glyph(btnText ? 'inbox' : 'check'));
+  box.append(mark);
   box.append(el('div', 'big', title));
   box.append(el('div', null, sub));
   if (btnText) {
@@ -199,7 +212,7 @@ function renderItem(it) {
     head.append(exp);
   }
 
-  head.append(el('div', 'name', it.name));
+  head.append(glyph('inbox', 'item-kind'), el('div', 'name', it.name));
   body.append(head);
 
   const meta = el('div', 'meta');
@@ -251,7 +264,7 @@ function renderBugItem(it) {
 
   const body = el('div', 'body');
   const head = el('div', 'head');
-  head.append(el('div', 'name', it.name));
+  head.append(glyph('bug', 'item-kind'), el('div', 'name', it.name));
   body.append(head);
 
   const meta = el('div', 'meta');
@@ -285,6 +298,7 @@ function mkSev(n) {
 
 function mkBugAct(text, action, it) {
   const b = el('button', `act ${action}`, text);
+  b.prepend(glyph('check'));
   b.addEventListener('click', (e) => {
     e.stopPropagation();
     openBugAction(action, it);
@@ -294,6 +308,7 @@ function mkBugAct(text, action, it) {
 
 function mkAct(text, action, it) {
   const b = el('button', `act ${action}`, text);
+  b.prepend(glyph(action === 'start' ? 'play' : 'check'));
   b.addEventListener('click', (e) => {
     e.stopPropagation();
     openTaskAction(action, it);
@@ -584,7 +599,7 @@ function renderAttachments(body, files, kind, id) {
     const line = el('button', 'dt-sub dt-file');
     line.type = 'button';
     line.title = f.name;
-    line.append(el('span', 'sname', f.name));
+    line.append(glyph('file'), el('span', 'sname', f.name));
     const label = el('span', 'swho', '打开');
     line.append(label);
     const error = el('div', 'dt-file-error');
@@ -834,6 +849,7 @@ function toast(msg, kind) {
 function renderStatus() {
   const st = $('status');
   st.classList.remove('err');
+  st.classList.toggle('connected', Boolean(S.st.ok && !S.st.error));
   st.replaceChildren();
   st.title = '';
 
@@ -956,14 +972,11 @@ function autoHeight() {
     return;
   }
   const list = $('list');
-  let content;
-  if (list.querySelector('.empty')) {
-    content = 150;
-  } else {
-    content = 0;
-    for (const child of list.children) content += child.offsetHeight + 4;
-  }
-  const chrome = 42 + 34 + 30 + 10 + ($('update-bar').hidden ? 0 : $('update-bar').offsetHeight); // titlebar + tabs + statusbar + 内边距 + 更新条
+  const style = getComputedStyle(list);
+  let content = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+  for (const child of list.children) content += child.offsetHeight;
+  content += (list.children.length - 1) * parseFloat(style.rowGap);
+  const chrome = document.querySelector('.shell').offsetHeight - list.clientHeight;
   window.zt.resize(Math.ceil(content + chrome));
 }
 

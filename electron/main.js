@@ -74,27 +74,11 @@ function publicConfig() {
   return { ...config };
 }
 
-/* ---------------- 托盘图标（运行时画，不依赖图片文件） ---------------- */
+/* ---------------- 托盘与应用共用图标 ---------------- */
 
 function makeTrayIcon() {
-  const size = 16;
-  const buf = Buffer.alloc(size * size * 4);
-  const cx = 7.5;
-  const cy = 7.5;
-  const r = 6.4;
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
-      const a = Math.max(0, Math.min(1, r - d));
-      if (a <= 0) continue;
-      const i = (y * size + x) * 4;
-      buf[i] = Math.round(0x3d * a);
-      buf[i + 1] = Math.round(0xa3 * a);
-      buf[i + 2] = Math.round(0xe8 * a);
-      buf[i + 3] = Math.round(255 * a);
-    }
-  }
-  return nativeImage.createFromBitmap(buf, { width: size, height: size });
+  return nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'icon.png'))
+    .resize({ width: 20, height: 20 });
 }
 
 /* ---------------- 窗口 ---------------- */

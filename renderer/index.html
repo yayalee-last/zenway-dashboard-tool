@@ -10,61 +10,70 @@
     <title>禅道挂件</title>
   </head>
   <body>
+    <svg class="icon-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <symbol id="i-pin" viewBox="0 0 24 24"><path d="m9 3 12 0-3 5v4l2 3H4l2-3V8L3 3h6M12 15v6"/></symbol>
+        <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7A7 7 0 0 1 18 5l2 2M4 17l2 2a7 7 0 0 0 11.9-2"/></symbol>
+        <symbol id="i-settings" viewBox="0 0 24 24"><path d="m9.5 3-.7 2.2-2 .9-2.1-.5-2.5 4.3 1.5 1.7v2.3l-1.5 1.7 2.5 4.3 2.2-.5 1.9.9.7 2.2h5l.7-2.2 1.9-.9 2.2.5 2.5-4.3-1.5-1.7v-2.3l1.5-1.7-2.5-4.3-2.1.5-2-.9L14.5 3z"/><circle cx="12" cy="12.8" r="3"/></symbol>
+        <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+        <symbol id="i-back" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol>
+        <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></symbol>
+        <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 20V4m-6 6 6-6 6 6"/></symbol>
+        <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+        <symbol id="i-inbox" viewBox="0 0 24 24"><path d="m5 4-3 9v6a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-6l-3-9zM2 13h6l2 3h4l2-3h6"/></symbol>
+        <symbol id="i-bug" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="14" rx="5"/><path d="m8 3 2 4m6-4-2 4M3 9l4 2m-4 5h4m-3 5 4-3M21 9l-4 2m4 5h-4m3 5-4-3M12 11v6"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+        <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></symbol>
+        <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 10 5-10 5L2 8zM2 12l10 5 10-5M2 16l10 5 10-5"/></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+        <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 4 12 8-12 8z"/></symbol>
+        <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H5a1 1 0 0 0-1 1v18a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8zM14 2v6h6M8 13h8m-8 4h5"/></symbol>
+      </defs>
+    </svg>
     <div class="shell">
       <header class="titlebar">
         <div class="brand">
-          <span class="dot"></span>
-          <span class="title">禅道</span>
-          <span class="count" id="count">0</span>
+          <img class="brand-mark" src="../assets/icon.png" width="32" height="32" alt="" />
+          <div class="brand-copy">
+            <span class="title">禅道<span class="count" id="count">0</span></span>
+            <span class="subtitle">桌面待办</span>
+          </div>
         </div>
         <div class="actions">
-          <button class="icon" id="btn-pin" title="窗口置顶">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M8 2.6v10M4.6 6L8 2.6 11.4 6M3.4 13.4h9.2" />
-            </svg>
+          <button class="icon" id="btn-pin" title="窗口置顶" aria-label="窗口置顶">
+            <svg class="glyph" aria-hidden="true"><use href="#i-pin"></use></svg>
           </button>
-          <button class="icon" id="btn-refresh" title="刷新">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-              <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.2v3h-3" />
-            </svg>
+          <button class="icon" id="btn-refresh" title="刷新" aria-label="刷新">
+            <svg class="glyph" aria-hidden="true"><use href="#i-refresh"></use></svg>
           </button>
-          <button class="icon" id="btn-set" title="设置">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-              <circle cx="8" cy="8" r="2.1" />
-              <path d="M8 1.6v1.7M8 12.7v1.7M1.6 8h1.7M12.7 8h1.7M3.5 3.5l1.2 1.2M11.3 11.3l1.2 1.2M12.5 3.5l-1.2 1.2M4.7 11.3l-1.2 1.2" />
-            </svg>
+          <button class="icon" id="btn-set" title="设置" aria-label="设置">
+            <svg class="glyph" aria-hidden="true"><use href="#i-settings"></use></svg>
           </button>
-          <button class="icon danger" id="btn-hide" title="收起（托盘常驻）">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-              <path d="M3 12h10" />
-            </svg>
+          <button class="icon danger" id="btn-hide" title="收起（托盘常驻）" aria-label="收起到托盘">
+            <svg class="glyph" aria-hidden="true"><use href="#i-minimize"></use></svg>
           </button>
         </div>
       </header>
 
       <nav class="tabs" id="tabs">
-        <button class="tab active" data-filter="open">未完成</button>
-        <button class="tab" data-filter="bug">缺陷</button>
-        <button class="tab" data-filter="overdue">逾期</button>
-        <button class="tab" data-filter="today">今天</button>
-        <button class="tab" data-filter="all">全部</button>
+        <button class="tab active" data-filter="open"><svg class="glyph" aria-hidden="true"><use href="#i-inbox"></use></svg><span>未完成</span></button>
+        <button class="tab" data-filter="bug"><svg class="glyph" aria-hidden="true"><use href="#i-bug"></use></svg><span>缺陷</span></button>
+        <button class="tab" data-filter="overdue"><svg class="glyph" aria-hidden="true"><use href="#i-clock"></use></svg><span>逾期</span></button>
+        <button class="tab" data-filter="today"><svg class="glyph" aria-hidden="true"><use href="#i-sun"></use></svg><span>今天</span></button>
+        <button class="tab" data-filter="all"><svg class="glyph" aria-hidden="true"><use href="#i-layers"></use></svg><span>全部</span></button>
       </nav>
 
       <main class="list" id="list"></main>
 
       <section class="detail" id="detail" hidden>
         <div class="dt-head">
-          <button class="icon" id="dt-back" title="返回列表（Esc）">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9.5 3.5L5 8l4.5 4.5" />
-            </svg>
+          <button class="icon" id="dt-back" title="返回列表（Esc）" aria-label="返回列表">
+            <svg class="glyph" aria-hidden="true"><use href="#i-back"></use></svg>
           </button>
           <span class="dt-id" id="dt-id"></span>
           <div class="dt-tools">
-            <button class="icon" id="dt-open" title="在浏览器打开">
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9.5 3h3.5v3.5M12.6 3.4L7.8 8.2M12 9.4v3.1a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-8a.5.5 0 0 1 .5-.5h3.1" />
-              </svg>
+            <button class="icon" id="dt-open" title="在浏览器打开" aria-label="在浏览器打开">
+              <svg class="glyph" aria-hidden="true"><use href="#i-external"></use></svg>
             </button>
           </div>
         </div>
@@ -73,17 +82,11 @@
       </section>
 
       <div class="update-bar" id="update-bar" hidden>
-        <span class="ub-ico">
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M8 12.5V3.5M4.6 6.9L8 3.5l3.4 3.4" />
-          </svg>
-        </span>
+        <span class="ub-ico"><svg class="glyph" aria-hidden="true"><use href="#i-up"></use></svg></span>
         <span class="ub-text" id="ub-text"></span>
         <button class="ub-btn" id="ub-go">更新</button>
-        <button class="icon ub-close" id="ub-close" title="这次先不管">
-          <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-            <path d="M4 4l8 8M12 4l-8 8" />
-          </svg>
+        <button class="icon ub-close" id="ub-close" title="这次先不管" aria-label="关闭更新提示">
+          <svg class="glyph" aria-hidden="true"><use href="#i-close"></use></svg>
         </button>
       </div>
 
@@ -96,10 +99,8 @@
         <div class="panel">
           <div class="panel-head">
             <span>连接禅道</span>
-            <button class="icon" id="btn-close-modal">
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-                <path d="M4 4l8 8M12 4l-8 8" />
-              </svg>
+            <button class="icon" id="btn-close-modal" aria-label="关闭设置">
+              <svg class="glyph" aria-hidden="true"><use href="#i-close"></use></svg>
             </button>
           </div>
 
@@ -165,10 +166,8 @@
         <div class="panel tight">
           <div class="panel-head">
             <span id="tm-title">开始任务</span>
-            <button class="icon" id="tm-close">
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-                <path d="M4 4l8 8M12 4l-8 8" />
-              </svg>
+            <button class="icon" id="tm-close" aria-label="关闭任务操作">
+              <svg class="glyph" aria-hidden="true"><use href="#i-close"></use></svg>
             </button>
           </div>
           <div class="tm-task" id="tm-task"></div>
@@ -194,10 +193,8 @@
         <div class="panel tight">
           <div class="panel-head">
             <span id="bm-title">解决缺陷</span>
-            <button class="icon" id="bm-close">
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-                <path d="M4 4l8 8M12 4l-8 8" />
-              </svg>
+            <button class="icon" id="bm-close" aria-label="关闭缺陷操作">
+              <svg class="glyph" aria-hidden="true"><use href="#i-close"></use></svg>
             </button>
           </div>
           <div class="tm-task" id="bm-task"></div>

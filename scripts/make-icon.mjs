@@ -47,13 +47,18 @@ function inCircle(x, y, cx, cy, r) {
   return dx * dx + dy * dy <= r * r;
 }
 
+function inStroke(x, y, x0, y0, x1, y1, width) {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const t = clamp01(((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy));
+  return inCircle(x, y, x0 + t * dx, y0 + t * dy, width / 2);
+}
+
 /* ---------------- 绘制到高分缓冲 ---------------- */
 
-const BG_TOP = hex('#2a3040');
-const BG_BOT = hex('#14161b');
-const ACCENT = hex('#e8a33d');
-const LINE = hex('#d8dce6');
-const DIM = hex('#6b7280');
+const BG_TOP = hex('#f7d49c');
+const BG_BOT = hex('#dca450');
+const INK = hex('#493722');
 
 const buf = new Float32Array(N * N * 4); // 非预乘 RGBA
 
@@ -77,32 +82,23 @@ for (let py = 0; py < N; py++) {
     const x = (px + 0.5) * s;
     const idx = py * N + px;
 
-    // 背景：圆角方块 + 纵向渐变
-    if (inRoundRect(x, y, 8, 8, LOGICAL - 8, LOGICAL - 8, 54)) {
-      const t = clamp01((y - 8) / (LOGICAL - 16));
-      blend(
-        idx,
-        BG_TOP[0] + (BG_BOT[0] - BG_TOP[0]) * t,
-        BG_TOP[1] + (BG_BOT[1] - BG_TOP[1]) * t,
-        BG_TOP[2] + (BG_BOT[2] - BG_TOP[2]) * t,
-        1
-      );
+    // 暖金圆角底，边缘保留一圈柔和高光。
+    if (inRoundRect(x, y, 12, 12, 244, 244, 58)) {
+      const t = clamp01((y - 12) / 232);
+      blend(idx, ...BG_TOP.map((v, i) => v + (BG_BOT[i] - v) * t), 1);
+      if (!inRoundRect(x, y, 14, 14, 242, 242, 56)) {
+        blend(idx, 1, 1, 1, 0.28 * (1 - t));
+      }
     }
 
-    // 左侧强调竖条
-    if (inRoundRect(x, y, 44, 46, 54, 210, 5)) blend(idx, ACCENT[0], ACCENT[1], ACCENT[2], 1);
-
-    // 三条任务行：状态点 + 文本条
-    for (const row of [
-      { cy: 82, dot: ACCENT, w: 118, solid: true },
-      { cy: 128, dot: DIM, w: 142, solid: false },
-      { cy: 174, dot: DIM, w: 96, solid: false },
-    ]) {
-      const alpha = row.solid ? 1 : 0.55;
-      if (inCircle(x, y, 80, row.cy, 11)) blend(idx, row.dot[0], row.dot[1], row.dot[2], alpha);
-      if (inRoundRect(x, y, 106, row.cy - 7, 106 + row.w, row.cy + 7, 7)) {
-        blend(idx, LINE[0], LINE[1], LINE[2], alpha * 0.9);
-      }
+    // 完成标记与两条待办，在托盘小尺寸下仍能辨认。
+    if (inStroke(x, y, 59, 77, 75, 94, 13) || inStroke(x, y, 75, 94, 105, 61, 13)) {
+      blend(idx, ...INK, 1);
+    }
+    if (inRoundRect(x, y, 126, 73, 196, 86, 6.5)) blend(idx, ...INK, 0.95);
+    for (const row of [{ cy: 136, end: 196 }, { cy: 183, end: 169 }]) {
+      if (inRoundRect(x, y, 59, row.cy - 7, 74, row.cy + 8, 5)) blend(idx, ...INK, 0.5);
+      if (inRoundRect(x, y, 96, row.cy - 6, row.end, row.cy + 6, 6)) blend(idx, ...INK, 0.68);
     }
   }
 }
