@@ -23,10 +23,11 @@ jobs:
       - name: 准备 Electron 运行时
         run: node -e "require('electron')"
       - name: 验证附件、任务操作、更新与窗口行为
-        run: node --test test/attachments.test.cjs test/task-actions.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs
+        run: node --test test/attachments.test.cjs test/task-actions.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs
       - name: 打包 Windows x64
         run: npm run pack
       - name: 发布 GitHub Release
         run: node scripts/release.mjs --skip-pack --note "GitHub Actions 自动打包"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}

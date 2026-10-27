@@ -15,6 +15,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import updateFormat from '../electron/update-format.js';
+import { notifyWecomRelease } from './release-notify.mjs';
 const { APP_ARCHIVE, UPDATE_MANIFEST } = updateFormat;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -136,7 +137,7 @@ try {
     });
     console.log(`  附件已上传：${asset.name || name}`);
   }
-  await api(`${API}/releases/${releaseId}`, {
+  release = await api(`${API}/releases/${releaseId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ draft: false }),
@@ -153,3 +154,10 @@ try {
 console.log('');
 console.log(`发版完成：https://github.com/${OWNER}/${REPO}/releases/tag/${TAG}`);
 console.log('已经装旧版的同事，下次挂件启动 8 秒后会自动看到更新提示。');
+try {
+  const sent = await notifyWecomRelease(release, process.env.WECOM_WEBHOOK_URL);
+  console.log(sent ? '企微发版通知已发送。' : '未配置企微地址或并非正式版，跳过通知。');
+} catch (e) {
+  console.error('正式版已发布，但企微通知失败：' + e.message);
+  process.exitCode = 1;
+}
