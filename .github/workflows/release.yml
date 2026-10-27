@@ -20,6 +20,8 @@ jobs:
           cache: npm
       - name: 安装依赖
         run: npm ci --no-audit --no-fund
+      - name: 准备 Electron 运行时
+        run: node -e "require('electron')"
       - name: 验证附件、更新与窗口行为
         run: node --test test/attachments.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs
       - name: 打包 Windows x64
