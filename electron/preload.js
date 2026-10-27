@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('zt', {
   testConfig: (patch) => ipcRenderer.invoke('config:test', patch),
   saveConfig: (patch) => ipcRenderer.invoke('config:save', patch),
   open: (url) => ipcRenderer.invoke('open:external', url),
+  openAttachment: (payload) => ipcRenderer.invoke('attachment:open', payload),
   taskDetail: (id) => ipcRenderer.invoke('task:detail', id),
   taskAction: (payload) => ipcRenderer.invoke('task:action', payload),
   bugDetail: (id) => ipcRenderer.invoke('bug:detail', id),

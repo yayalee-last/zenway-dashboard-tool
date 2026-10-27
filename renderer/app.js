@@ -577,6 +577,41 @@ function fixImages(root) {
   }
 }
 
+function renderAttachments(body, files, kind, id) {
+  if (!files || !files.length) return;
+  body.append(el('div', 'dt-h', `附件 ${files.length}`));
+  for (const f of files) {
+    const line = el('button', 'dt-sub dt-file');
+    line.type = 'button';
+    line.title = f.name;
+    line.append(el('span', 'sname', f.name));
+    const label = el('span', 'swho', '打开');
+    line.append(label);
+    const error = el('div', 'dt-file-error');
+    error.hidden = true;
+    error.setAttribute('role', 'alert');
+    line.addEventListener('click', async () => {
+      line.disabled = true;
+      label.textContent = '下载中…';
+      error.hidden = true;
+      try {
+        const result = await window.zt.openAttachment({ kind, id, fileId: f.id });
+        if (!result.ok) {
+          error.textContent = result.error;
+          error.hidden = false;
+        }
+      } catch {
+        error.textContent = '附件打开失败，请重试';
+        error.hidden = false;
+      } finally {
+        line.disabled = false;
+        label.textContent = '打开';
+      }
+    });
+    body.append(line, error);
+  }
+}
+
 function renderDetail(t) {
   const body = $('dt-body');
   const st = String(t.status || '').toLowerCase();
@@ -637,6 +672,8 @@ function renderDetail(t) {
   } else {
     body.append(el('div', 'dt-empty', '这条任务没写描述'));
   }
+
+  renderAttachments(body, t.files, 'task', t.id);
 
   // 子任务
   if (t.children && t.children.length) {
@@ -745,16 +782,7 @@ function renderBugDetail(b) {
     body.append(el('div', 'dt-empty', '这条缺陷没写重现步骤'));
   }
 
-  if (b.files && b.files.length) {
-    body.append(el('div', 'dt-h', `附件 ${b.files.length}`));
-    for (const f of b.files) {
-      const line = el('div', 'dt-sub');
-      line.append(el('span', 'sname', f.name));
-      line.append(el('span', 'swho', f.url ? '浏览器打开' : '需登录'));
-      line.addEventListener('click', () => f.url && window.zt.open(f.url));
-      body.append(line);
-    }
-  }
+  renderAttachments(body, b.files, 'bug', b.id);
 
   if (b.history && b.history.length) {
     body.append(el('div', 'dt-h', '动态'));

@@ -247,6 +247,55 @@ class ZentaoClient {
     return `data:${type};base64,${buf.toString('base64')}`;
   }
 
+  /** 通用附件通过 Token 下载；禁止重定向，避免鉴权头被转发到其他地址。 */
+  async downloadFile(fileId, destination) {
+    if (!Number.isSafeInteger(fileId) || fileId <= 0) throw new ZentaoError('附件编号无效', 0);
+    const authenticate = async force => {
+      try {
+        await this.ensureToken(force);
+      } catch (e) {
+        throw new ZentaoError('附件认证失败，请检查网络及账号配置', e.status);
+      }
+    };
+    await authenticate(false);
+    const grab = async () => {
+      try {
+        return await fetch(`${this.cfg.baseUrl}/api.php/v1/files/${fileId}`, {
+          headers: { Token: this.token },
+          redirect: 'error',
+          signal: AbortSignal.timeout(this.cfg.timeoutMs),
+        });
+      } catch {
+        throw new ZentaoError('附件下载失败：连接失败或超时', 0);
+      }
+    };
+    let response = await grab();
+    if (response.status === 401) {
+      await response.body?.cancel();
+      await authenticate(true);
+      response = await grab();
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      if (response.status === 403) throw new ZentaoError('无权限下载此附件', 403);
+      if (response.status === 401) throw new ZentaoError('附件登录失效，请检查账号配置', 401);
+      throw new ZentaoError(`附件下载失败（HTTP ${response.status}）`, response.status);
+    }
+    // 文件端点成功响应带 attachment；登录页和 JSON 错误不能交给系统打开。
+    if (!/^attachment(?:;|$)/i.test(response.headers.get('content-disposition') || '')) {
+      await response.body?.cancel();
+      throw new ZentaoError('附件接口未返回文件，请检查登录状态及下载权限', 0);
+    }
+    const { Readable } = require('node:stream');
+    const { pipeline } = require('node:stream/promises');
+    const { createWriteStream } = require('node:fs');
+    try {
+      await pipeline(Readable.fromWeb(response.body), createWriteStream(destination, { flags: 'wx' }));
+    } catch {
+      throw new ZentaoError('附件下载或保存失败，请检查网络、磁盘空间及目录权限', 0);
+    }
+  }
+
   /* ---------------- 数据 ---------------- */
 
   _accountOf(t) {

@@ -988,6 +988,25 @@ input::placeholder {
   cursor: pointer;
 }
 
+.dt-file {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+}
+
+.dt-file:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.dt-file-error {
+  color: var(--danger);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .dt-sub:hover {
   background: rgba(255, 255, 255, 0.05);
 }

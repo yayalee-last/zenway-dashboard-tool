@@ -3,7 +3,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, screen } = require('electron');
-const { ZentaoClient, normalizeBaseUrl } = require('./zentao');
+const { ZentaoClient, ZentaoError, normalizeBaseUrl } = require('./zentao');
 const { Updater } = require('./updater');
 
 app.setName('zentao-widget');
@@ -635,6 +635,58 @@ function showAndFocus() {
 
 /* ---------------- IPC ---------------- */
 
+function detailFiles(detail) {
+  // 现场接口：无附件为 []，有附件为按文件 ID 索引的对象。
+  return Object.values(detail.files || {}).map(f => ({ id: Number(f.id), name: String(f.title) }));
+}
+
+function attachmentFilename(title) {
+  let name = title.replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '_').replace(/[. ]+$/g, '');
+  if (!name) name = '附件';
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(name)) name = '_' + name;
+  const extension = path.extname(name);
+  return name.slice(0, name.length - extension.length).slice(0, 160) + extension.slice(0, 20);
+}
+
+async function openAttachment({ kind, id, fileId } = {}) {
+  if (!['task', 'bug'].includes(kind) || ![id, fileId].every(n => Number.isSafeInteger(n) && n > 0)) {
+    return { ok: false, error: '附件请求无效' };
+  }
+  let directory;
+  let opened = false;
+  let stage = '读取附件信息';
+  try {
+    // 回查所属详情和权限；不信任前端提供的路径、文件名或下载地址。
+    const detail = await (kind === 'task' ? client.getTaskDetail(id) : client.getBugDetail(id));
+    const file = detailFiles(detail).find(f => f.id === fileId);
+    if (!file) return { ok: false, error: '此任务或缺陷已无该附件，请刷新详情' };
+
+    stage = '保存附件';
+    directory = await fs.promises.mkdtemp(path.join(app.getPath('temp'), 'zentao-attachment-'));
+    const destination = path.join(directory, attachmentFilename(file.name));
+    stage = '下载附件';
+    await client.downloadFile(file.id, destination);
+    stage = '本地打开附件';
+    const error = await shell.openPath(destination);
+    if (error) throw new Error('System could not open attachment');
+    opened = true;
+    return { ok: true };
+  } catch (e) {
+    const hint = e.status === 403 ? '无权限'
+      : e.status === 401 ? '登录失效，请检查账号配置'
+      : e.status ? 'HTTP ' + e.status
+      : stage === '本地打开附件' ? '请检查系统默认程序及文件访问权限'
+      : stage === '保存附件' ? '请检查磁盘空间及目录权限'
+      : stage === '下载附件' && e instanceof ZentaoError ? e.message
+      : stage === '下载附件' ? '请检查网络、登录状态、磁盘空间及目录权限'
+      : '请检查网络及登录状态';
+    return { ok: false, error: stage + '失败：' + hint };
+  } finally {
+    if (directory && !opened) await fs.promises.rm(directory, { recursive: true, force: true });
+  }
+}
+
+
 function wireIpc() {
   ipcMain.handle('state:get', () => ({
     state,
@@ -685,6 +737,8 @@ function wireIpc() {
     if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);
   });
 
+  ipcMain.handle('attachment:open', (_e, payload) => openAttachment(payload));
+
   ipcMain.handle('task:detail', async (_e, id) => {
     try {
       const d = await client.getTaskDetail(id);
@@ -724,6 +778,7 @@ function wireIpc() {
           childrenTotal: allKids.length,
           othersCount: allKids.length - myKids.length,
           desc: await inlineDescImages(sanitizeHtml(d.desc, config.baseUrl)),
+          files: detailFiles(d),
           history: (d.actions || [])
             .filter((a) => a && a.action !== 'mentioned')
             .slice(-10)
@@ -807,16 +862,7 @@ function wireIpc() {
     try {
       const d = await client.getBugDetail(id);
       const name = (o) => (o && (o.realname || o.account)) || '';
-      const files = (d.files || [])
-        .map((f) => {
-          const fid = Number(f.id || f.fileID) || 0;
-          return {
-            id: fid,
-            name: String(f.title || f.name || f.realname || `附件 ${fid}`),
-            url: fid ? `${config.baseUrl}/index.php?m=file&f=download&fileID=${fid}` : '',
-          };
-        })
-        .filter((f) => f.name);
+      const files = detailFiles(d);
 
       return {
         ok: true,
