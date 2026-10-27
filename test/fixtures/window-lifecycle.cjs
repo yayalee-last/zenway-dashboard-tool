@@ -18,6 +18,10 @@ fs.writeFileSync(path.join(profile, 'config.json'), JSON.stringify({
   displayMode: 'ball',
 }));
 process.argv.push('--mock');
+const readyWindows = new WeakSet();
+app.on('browser-window-created', (_event, window) => {
+  window.once('ready-to-show', () => readyWindows.add(window));
+});
 
 // Run the real main process against an isolated profile, without adding a test API to production.
 const source = path.join(root, 'electron/main.js');
@@ -346,6 +350,7 @@ app.whenReady().then(async () => {
     cursor = outside;
     await pause(450);
     assert.equal(win.isVisible(), true, 'resident mode must keep the complete panel visible after mouse leave');
+    assert.equal(ball.isVisible(), false, 'resident mode must hide the floating ball');
     assert.equal(preview.isVisible(), false);
     assert.equal(JSON.parse(fs.readFileSync(path.join(profile, 'config.json'), 'utf8')).displayMode, 'panel');
     win.hide();
@@ -353,11 +358,13 @@ app.whenReady().then(async () => {
     enterBall();
     await pause(200);
     assert.equal(win.isVisible(), false, 'resident mode must respect intentional hiding and disable hover expansion');
+    assert.equal(ball.isVisible(), false, 'intentional hiding in resident mode must keep the ball hidden');
     main.exports.showAndFocus();
     await win.webContents.executeJavaScript(
       "openSettings(); document.getElementById('f-displayMode').value = 'ball'; saveSettings()");
     cursor = outside;
     await pause(450);
+    assert.equal(ball.isVisible(), true, 'switching back to ball mode must restore the floating ball');
     assert.equal(win.isVisible(), false, 'ball mode must restore mouse-leave collapse');
     enterBall();
     await pause(200);
@@ -405,8 +412,9 @@ app.whenReady().then(async () => {
     main.exports.getWindow().destroy();
     process.argv.push('--background');
     main.exports.createWindow();
-    await waitUntil(() => main.exports.getFloatingBall() !== previousBackgroundController && main.exports.getFloatingBall().window.isVisible());
+    await waitUntil(() => main.exports.getFloatingBall() !== previousBackgroundController && readyWindows.has(main.exports.getFloatingBall().window));
     assert.equal(main.exports.getWindow().isVisible(), false, 'silent startup must respect background mode even with a resident panel preference');
+    assert.equal(main.exports.getFloatingBall().window.isVisible(), false, 'a saved resident preference must not reveal the ball when its page becomes ready');
     process.argv.splice(process.argv.indexOf('--background'), 1);
     report({ passed: true, samples });
     app.__quitting = true;

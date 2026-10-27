@@ -42,6 +42,7 @@ function createFloatingBall(panel, savedPosition, onMove) {
   let collapseTimer = null;
   let moveTimer = null;
   let pointerTimer = null;
+  let ballReady = false;
   let preview = null;
   let previewReady = false;
   let previewEnabled = false;
@@ -159,7 +160,12 @@ function createFloatingBall(panel, savedPosition, onMove) {
     displayMode = mode;
     cancelCollapse();
     engaged = panel.isVisible();
-    if (mode === 'panel') showPanel();
+    if (mode === 'panel') {
+      if (ballReady) ball.hide();
+      showPanel();
+    } else if (ballReady) {
+      ball.showInactive();
+    }
   }
   function showPanel(focus = false) {
     cancelCollapse();
@@ -190,7 +196,8 @@ function createFloatingBall(panel, savedPosition, onMove) {
 
   pinBall();
   ball.once('ready-to-show', () => {
-    ball.showInactive();
+    ballReady = true;
+    if (displayMode === 'ball') ball.showInactive();
     pointerTimer = setInterval(trackPointer, 80);
   });
   ball.on('show', pinBall);
