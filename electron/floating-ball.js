@@ -80,15 +80,16 @@ function createFloatingBall(panel, savedPosition, onMove) {
   }
 
   function positionPanel() {
-    positionBeside(panel);
+    if (displayMode === 'panel') keepOnScreen(panel);
+    else positionBeside(panel);
   }
 
-  function keepBallOnScreen() {
-    const bounds = ball.getBounds();
+  function keepOnScreen(target) {
+    const bounds = target.getBounds();
     const work = screen.getDisplayMatching(bounds).workArea;
-    const px = Math.max(work.x, Math.min(bounds.x, work.x + work.width - SIZE));
-    const py = Math.max(work.y, Math.min(bounds.y, work.y + work.height - SIZE));
-    if (px !== bounds.x || py !== bounds.y) ball.setPosition(px, py);
+    const px = Math.max(work.x, Math.min(bounds.x, work.x + work.width - bounds.width));
+    const py = Math.max(work.y, Math.min(bounds.y, work.y + work.height - bounds.height));
+    if (px !== bounds.x || py !== bounds.y) target.setPosition(px, py);
     return { x: px, y: py };
   }
 
@@ -151,7 +152,7 @@ function createFloatingBall(panel, savedPosition, onMove) {
     previewItems = items.filter(item => !isDone(item)).sort(compareItems).slice(0, 3)
       .map(item => ({ id: item.id, kind: item.kind || 'task', name: item.name, urgent: urgentOf(item) }));
     if (previewEnabled && previewItems.length && !preview) createPreview();
-    keepBallOnScreen();
+    keepOnScreen(ball);
     syncPreview();
   }
 
@@ -208,7 +209,7 @@ function createFloatingBall(panel, savedPosition, onMove) {
     syncPreview();
     clearTimeout(moveTimer);
     moveTimer = setTimeout(() => {
-      onMove(keepBallOnScreen());
+      onMove(keepOnScreen(ball));
     }, 300);
   });
   panel.on('resize', positionPanel);
