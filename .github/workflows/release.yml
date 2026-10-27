@@ -23,7 +23,7 @@ jobs:
       - name: 准备 Electron 运行时
         run: node -e "require('electron')"
       - name: 验证附件、任务操作、更新与窗口行为
-        run: node --test test/attachments.test.cjs test/task-actions.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs
+        run: node --test test/attachments.test.cjs test/task-actions.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs test/release-publish.test.mjs
       - name: 打包 Windows x64
         run: npm run pack
       - name: 发布 GitHub Release

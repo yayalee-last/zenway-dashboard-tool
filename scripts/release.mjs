@@ -137,14 +137,28 @@ try {
     });
     console.log(`  附件已上传：${asset.name || name}`);
   }
-  release = await api(`${API}/releases/${releaseId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ draft: false }),
-  });
+  try {
+    release = await api(`${API}/releases/${releaseId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ draft: false }),
+    });
+  } catch (publishError) {
+    // GitHub 可能已执行公开操作，却返回 500 或断开连接；先核对，避免漏通知。
+    console.warn('公开 Release 请求异常，正在核对实际状态：' + publishError.message);
+    let current;
+    try {
+      current = await api(`${API}/releases/${releaseId}`);
+    } catch (verifyError) {
+      throw new Error(`公开请求异常（${publishError.message}），且无法核对 Release 状态：${verifyError.message}`);
+    }
+    if (current.draft || !current.published_at) throw publishError;
+    release = current;
+    console.log('已确认 Release 实际公开，继续后续通知。');
+  }
 } catch (e) {
   console.error('发布失败：' + e.message);
-  console.error('草稿已保留，所有附件上传成功后才会公开。');
+  console.error('未确认发布成功，本次未发送企微通知；请先检查 GitHub Release 状态再重试。');
   process.exit(1);
 }
 
