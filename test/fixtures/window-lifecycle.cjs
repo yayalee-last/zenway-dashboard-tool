@@ -101,6 +101,50 @@ app.whenReady().then(async () => {
     await sendRelease('v0.3.6');
     assert.equal(await barHidden(), false, 'a newer release must become visible again');
     await sendRelease('v0.3.6', false);
+    // Update notifications must size the visible page, even when the list is hidden.
+    const listHeight = win.getSize()[1];
+    const { ipcMain } = require('electron');
+    ipcMain.removeHandler('task:detail');
+    ipcMain.handle('task:detail', async (_event, id) => ({
+      ok: true, task: { id, name: 'Detail height regression', status: 'doing', desc: '<p>Task description</p>' },
+    }));
+    for (const kind of ['task', 'bug']) {
+      await win.webContents.executeJavaScript(`openDetail({ id: 1042, kind: '${kind}' })`);
+      await pause(100);
+      const detailHeight = win.getSize()[1];
+      assert.equal(detailHeight, 600, `${kind} detail must open at its intended height`);
+      await sendRelease('v0.3.6', false);
+      assert.equal(win.getSize()[1], detailHeight, `update check must preserve ${kind} detail height`);
+      await sendRelease('v0.3.7');
+      assert.equal(win.getSize()[1], detailHeight, 'visible update bar must preserve detail height');
+      await win.webContents.executeJavaScript("document.getElementById('ub-close').click()");
+      await pause(100);
+      assert.equal(win.getSize()[1], detailHeight, 'dismissing an update must preserve detail height');
+
+      await win.webContents.executeJavaScript("document.getElementById('btn-settings-link').click()");
+      await pause(100);
+      const settingsHeight = win.getSize()[1];
+      await sendRelease('v0.3.7', false);
+      assert.equal(win.getSize()[1], settingsHeight, 'update check must preserve settings height');
+      await win.webContents.executeJavaScript("document.getElementById('btn-close-modal').click()");
+      await pause(100);
+      assert.equal(win.getSize()[1], detailHeight, 'closing settings must restore detail height');
+
+      if (kind === 'bug') {
+        await win.webContents.executeJavaScript("document.querySelector('#dt-foot .btn.primary').click()");
+        await pause(100);
+        const actionHeight = win.getSize()[1];
+        await sendRelease('v0.3.7', false);
+        assert.equal(win.getSize()[1], actionHeight, 'update check must preserve bug action height');
+        await win.webContents.executeJavaScript("document.getElementById('bm-cancel').click()");
+        await pause(100);
+        assert.equal(win.getSize()[1], detailHeight, 'closing bug action must restore detail height');
+      }
+
+      await win.webContents.executeJavaScript("document.getElementById('dt-back').click()");
+      await pause(100);
+      assert.equal(win.getSize()[1], listHeight, 'returning to the list must restore content sizing');
+    }
 
     const refreshedAt = main.exports.getState().at;
     await pause(31000);

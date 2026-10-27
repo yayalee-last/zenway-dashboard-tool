@@ -923,6 +923,10 @@ function renderAll() {
 function autoHeight() {
   // 弹层打开时窗口尺寸由弹层自己定，别让列表把它缩回去
   if (!$('modal').hidden || !$('task-modal').hidden || !$('bug-modal').hidden) return;
+  if (DT.open) {
+    window.zt.resize(600);
+    return;
+  }
   const list = $('list');
   let content;
   if (list.querySelector('.empty')) {
