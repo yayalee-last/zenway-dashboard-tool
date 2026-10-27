@@ -11,9 +11,11 @@ const root = path.resolve(__dirname, '../..');
 const profile = path.join(output, 'user-data');
 fs.mkdirSync(profile, { recursive: true });
 app.setPath('userData', profile);
+app.setLoginItemSettings = () => {}; // Keep the settings test isolated from Windows startup preferences.
 fs.writeFileSync(path.join(profile, 'config.json'), JSON.stringify({
   baseUrl: 'https://example.invalid', account: 'window-test', intervalSec: 30,
   alwaysOnTop: true, autoLaunch: false, autoUpdate: false,
+  displayMode: 'ball',
 }));
 process.argv.push('--mock');
 
@@ -23,7 +25,7 @@ const main = new Module(source, module);
 main.filename = source;
 main.paths = Module._nodeModulePaths(path.dirname(source));
 main._compile(fs.readFileSync(source, 'utf8') + `
-module.exports = { getWindow: () => win, getFloatingBall: () => floatingBall, getState: () => state, toggleWindow, showAndFocus, doRefresh, buildTrayMenu };
+module.exports = { getWindow: () => win, getFloatingBall: () => floatingBall, getState: () => state, toggleWindow, showAndFocus, doRefresh, buildTrayMenu, pushState, loadConfig, createWindow };
 `, source);
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -217,15 +219,195 @@ app.whenReady().then(async () => {
       assert.equal(win.getSize()[1], listHeight, 'returning to the list must restore content sizing');
     }
 
+    // Exercise settings, native preview placement and live state against the real windows.
+    const artifacts = process.env.ZT_PREVIEW_ARTIFACT_DIR || output;
+    const waitUntil = async (predicate) => {
+      const until = Date.now() + 5000;
+      while (!predicate()) {
+        if (Date.now() > until) throw new Error('Preview did not reach the expected state');
+        await pause(40);
+      }
+    };
+    const previewWindow = () => BrowserWindow.getAllWindows().find(window => window.getTitle() === '禅道常驻待办');
+    const previewIds = preview => preview.webContents.executeJavaScript(
+      "Array.from(document.querySelectorAll('li'), row => Number(row.dataset.id))");
+    assert.equal(previewWindow(), undefined, 'preview must be off by default');
+    await win.webContents.executeJavaScript("openSettings()");
+    assert.equal(await win.webContents.executeJavaScript("document.getElementById('f-showTopThree').checked"), false);
+    await win.webContents.executeJavaScript(
+      "document.getElementById('f-showTopThree').checked = true; document.getElementById('f-previewSide').value = 'left'");
+    fs.writeFileSync(path.join(artifacts, 'preview-settings.png'), (await win.capturePage()).toPNG());
+    await win.webContents.executeJavaScript('saveSettings()');
+    cursor = outside;
+    win.hide();
+    await waitUntil(() => previewWindow()?.isVisible());
+    let preview = previewWindow();
+    await pause(100);
+    assert.deepEqual(await previewIds(preview), [10231, 1049, 10188], 'preview must match the first three unfinished rows, including bugs');
+    assert.equal(preview.isAlwaysOnTop(), true);
+    assert.equal(preview.isFocusable(), false);
+    assert.equal(win.isVisible(), false, 'preview must not expand the full panel');
+    assert(preview.getBounds().x + preview.getBounds().width < ball.getBounds().x, 'left preview must remain left of the ball');
+    fs.writeFileSync(path.join(artifacts, 'preview-left.png'), (await preview.capturePage()).toPNG());
+    const clickPreviewRow = async index => {
+      const point = await preview.webContents.executeJavaScript(
+        "(function () { const row = document.querySelectorAll('#preview-list li')[" + index + "]; const rect = row.getBoundingClientRect(); return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) }; })()");
+      preview.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
+      preview.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
+      await pause(150);
+    };
+    for (const item of [{ index: 0, id: 10231, kind: 'task' }, { index: 1, id: 1049, kind: 'bug' }]) {
+      if (item.kind === 'bug') await win.webContents.executeJavaScript('openSettings()');
+      await clickPreviewRow(item.index);
+      assert.equal(win.isVisible(), true, 'clicking a preview row must open the full panel');
+      assert.equal(preview.isVisible(), false);
+      assert.equal(await win.webContents.executeJavaScript('DT.id'), item.id, 'preview clicks must open the selected item');
+      assert.equal(await win.webContents.executeJavaScript('DT.kind'), item.kind, 'task and bug IDs must use their respective detail APIs');
+      assert.equal(await win.webContents.executeJavaScript("document.getElementById('detail').hidden"), false);
+      assert.equal(await win.webContents.executeJavaScript("document.getElementById('modal').hidden"), true, 'opening a preview item must close any preserved settings overlay');
+      enterPanel();
+      await pause(100);
+      await win.webContents.executeJavaScript('closeDetail()');
+      cursor = outside;
+      await pause(450);
+      assert.equal(preview.isVisible(), true, 'preview must return after leaving the selected detail');
+    }
+    enterBall();
+    await pause(200);
+    assert.equal(win.isVisible(), true);
+    assert.equal(preview.isVisible(), false, 'full panel must replace the preview on hover');
+    cursor = outside;
+    await pause(450);
+    assert.equal(win.isVisible(), false);
+    assert.equal(preview.isVisible(), true, 'preview must return after hover collapse');
+
+    ball.setPosition(area.x + Math.floor((area.width - originalBall.width) / 2), area.y + 48);
+    await win.webContents.executeJavaScript(
+      "openSettings(); document.getElementById('f-previewSide').value = 'right'; saveSettings()");
+    win.hide();
+    await pause(450);
+    assert(preview.getBounds().x > ball.getBounds().x + ball.getBounds().width, 'selected right side must be respected');
+    fs.writeFileSync(path.join(artifacts, 'preview-right.png'), (await preview.capturePage()).toPNG());
+    const savedPreview = JSON.parse(fs.readFileSync(path.join(profile, 'config.json'), 'utf8'));
+    assert.equal(savedPreview.showTopThree, true);
+    assert.equal(savedPreview.previewSide, 'right', 'settings must persist the selected side');
+    ball.setPosition(area.x + area.width - originalBall.width, area.y + area.height - originalBall.height);
+    await pause(450);
+    const rightPreviewBounds = preview.getBounds();
+    assert.equal(ball.getBounds().x, area.x + area.width - originalBall.width, 'preview must not force the ball away from the right edge');
+    assert(rightPreviewBounds.x + rightPreviewBounds.width < ball.getBounds().x, 'right-side preference must flip left when the right edge has no room');
+    assert(rightPreviewBounds.y + rightPreviewBounds.height <= area.y + area.height, 'preview must stay above the taskbar');
+    await clickPreviewRow(2);
+    assert.equal(win.isVisible(), true, 'auto-flipped preview must remain clickable');
+    assert.equal(await win.webContents.executeJavaScript('DT.id'), 10188);
+    enterPanel();
+    await pause(100);
+    await win.webContents.executeJavaScript('closeDetail()');
+    cursor = outside;
+    await pause(450);
+
+    const originalItems = main.exports.getState().items.slice();
+    const replaceItems = items => {
+      const current = main.exports.getState().items;
+      current.splice(0, current.length, ...items);
+      main.exports.pushState();
+    };
+    replaceItems([{ id: 1, kind: 'task', name: '<img src=x onerror=alert(1)>', status: 'doing', pri: 1 }]);
+    await pause(100);
+    assert.deepEqual(await previewIds(preview), [1], 'fewer than three items must show only available rows');
+    assert.equal(preview.getSize()[1], 80);
+    assert.equal(await preview.webContents.executeJavaScript("document.querySelector('.name').textContent"), '<img src=x onerror=alert(1)>');
+    assert.equal(await preview.webContents.executeJavaScript("document.querySelectorAll('img').length"), 0, 'task titles must render as text');
+    replaceItems([]);
+    assert.equal(preview.isVisible(), false, 'empty state must hide the preview');
+    replaceItems(originalItems);
+    await pause(100);
+    assert.equal(preview.isVisible(), true, 'state updates must restore the preview when tasks appear');
+    assert.deepEqual(await previewIds(preview), [10231, 1049, 10188]);
+
+    await win.webContents.executeJavaScript(
+      "openSettings(); document.getElementById('f-showTopThree').checked = false; saveSettings()");
+    await pause(100);
+    assert.equal(preview.isVisible(), false, 'disabling the setting must hide the preview');
+    await win.webContents.executeJavaScript(
+      "openSettings(); document.getElementById('f-showTopThree').checked = true; document.getElementById('f-previewSide').value = 'left'; saveSettings()");
+    win.hide();
+    ball.setPosition(area.x, area.y);
+    await pause(450);
+    assert.equal(ball.getBounds().x, area.x, 'preview must not force the ball away from the left edge');
+    assert(preview.getBounds().x > ball.getBounds().x + ball.getBounds().width, 'left-side preference must flip right when the left edge has no room');
+    ball.setPosition(area.x + Math.floor((area.width - originalBall.width) / 2), area.y + 48);
+    await pause(100);
+    assert(preview.getBounds().x + preview.getBounds().width < ball.getBounds().x, 'preview must return to the preferred side when room becomes available');
+    main.exports.showAndFocus();
+    enterPanel();
+    await win.webContents.executeJavaScript(
+      "openSettings(); document.getElementById('f-displayMode').value = 'panel'; saveSettings()");
+    cursor = outside;
+    await pause(450);
+    assert.equal(win.isVisible(), true, 'resident mode must keep the complete panel visible after mouse leave');
+    assert.equal(preview.isVisible(), false);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(profile, 'config.json'), 'utf8')).displayMode, 'panel');
+    win.hide();
+    await main.exports.doRefresh('timer');
+    enterBall();
+    await pause(200);
+    assert.equal(win.isVisible(), false, 'resident mode must respect intentional hiding and disable hover expansion');
+    main.exports.showAndFocus();
+    await win.webContents.executeJavaScript(
+      "openSettings(); document.getElementById('f-displayMode').value = 'ball'; saveSettings()");
+    cursor = outside;
+    await pause(450);
+    assert.equal(win.isVisible(), false, 'ball mode must restore mouse-leave collapse');
+    enterBall();
+    await pause(200);
+    assert.equal(win.isVisible(), true, 'ball mode must restore hover expansion');
+    enterPanel();
+    await win.webContents.executeJavaScript("window.zt.saveConfig({displayMode:'panel'})");
+    cursor = outside;
     const refreshedAt = main.exports.getState().at;
     await pause(31000);
     assert(main.exports.getState().at > refreshedAt, 'scheduled refresh must have run');
-    assert.equal(win.isVisible(), true, 'idle refresh must keep the window visible');
+    assert.equal(win.isVisible(), true, 'scheduled refresh must keep the resident panel visible with the pointer outside');
     assert.equal(win.isAlwaysOnTop(), true, 'idle refresh must keep the window pinned');
     const text = await win.webContents.executeJavaScript('document.body.innerText');
     assert(text.includes('禅道'));
     fs.writeFileSync(path.join(output, 'idle.png'), (await win.capturePage()).toPNG());
     snapshot('after-idle-refresh');
+    // Recreate the native windows using settings reloaded from disk.
+    cursor = outside;
+    await win.webContents.executeJavaScript("window.zt.saveConfig({showTopThree:true, previewSide:'right', displayMode:'ball'})");
+    main.exports.getFloatingBall().destroy();
+    win.destroy();
+    main.exports.loadConfig();
+    main.exports.createWindow();
+    await waitUntil(() => previewWindow()?.isVisible());
+    preview = previewWindow();
+    assert.equal(main.exports.getWindow().isVisible(), false, 'restoring saved settings must keep the full panel collapsed');
+    assert.equal(await main.exports.getWindow().webContents.executeJavaScript("(async () => (await window.zt.boot()).config.previewSide)()"), 'right', 'recreated windows must restore the saved preference while allowing automatic side changes');
+    const stored = JSON.parse(fs.readFileSync(path.join(profile, 'config.json'), 'utf8'));
+    delete stored.displayMode;
+    fs.writeFileSync(path.join(profile, 'config.json'), JSON.stringify(stored));
+    const previousController = main.exports.getFloatingBall();
+    previousController.destroy();
+    main.exports.getWindow().destroy();
+    main.exports.loadConfig();
+    main.exports.createWindow();
+    await waitUntil(() => main.exports.getFloatingBall() !== previousController && main.exports.getFloatingBall().window.isVisible() && previewWindow()?.isVisible());
+    cursor = outside;
+    await pause(450);
+    assert.equal(main.exports.getWindow().isVisible(), false, 'profiles without a saved display mode must start with only the floating ball and optional preview');
+    assert.equal(previewWindow().isVisible(), true);
+    assert.equal(await main.exports.getWindow().webContents.executeJavaScript("(async () => (await window.zt.boot()).config.displayMode)()"), 'ball');
+    await main.exports.getWindow().webContents.executeJavaScript("window.zt.saveConfig({displayMode:'panel'})");
+    const previousBackgroundController = main.exports.getFloatingBall();
+    previousBackgroundController.destroy();
+    main.exports.getWindow().destroy();
+    process.argv.push('--background');
+    main.exports.createWindow();
+    await waitUntil(() => main.exports.getFloatingBall() !== previousBackgroundController && main.exports.getFloatingBall().window.isVisible());
+    assert.equal(main.exports.getWindow().isVisible(), false, 'silent startup must respect background mode even with a resident panel preference');
+    process.argv.splice(process.argv.indexOf('--background'), 1);
     report({ passed: true, samples });
     app.__quitting = true;
     app.quit();

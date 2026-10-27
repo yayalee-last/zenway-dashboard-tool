@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <title>禅道常驻待办</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+      body {
+        font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+        color: #f0f0f3;
+        user-select: none;
+      }
+      .preview {
+        height: 100%;
+        padding: 10px;
+        border: 1px solid rgba(239, 189, 112, .24);
+        border-radius: 14px;
+        background: linear-gradient(145deg, #282a30, #1b1d23);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
+      }
+      header { height: 18px; margin-bottom: 8px; color: #b4bac6; font-size: 10px; line-height: 18px; letter-spacing: 1px; }
+      ol { display: flex; flex-direction: column; gap: 4px; list-style: none; }
+      li { height: 32px; }
+      button { display: flex; align-items: center; gap: 8px; width: 100%; height: 100%; padding: 0 9px; border: 1px solid transparent; border-radius: 7px; background: rgba(255, 255, 255, .045); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+      button:hover { border-color: rgba(239, 189, 112, .3); background: rgba(239, 189, 112, .1); }
+      button:focus-visible { outline: 2px solid #efbd70; outline-offset: 1px; }
+      .rank { flex: none; color: #efbd70; font-size: 10px; font-variant-numeric: tabular-nums; }
+      .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 20px; }
+      li[data-urgent="overdue"] .rank { color: #f48c92; }
+      li[data-urgent="today"] .rank { color: #edb36d; }
+      li[data-urgent="soon"] .rank { color: #d6c58c; }
+    </style>
+  </head>
+  <body>
+    <section class="preview" aria-label="前三条未完成待办">
+      <header>待办 · 前三项</header>
+      <ol id="preview-list"></ol>
+    </section>
+    <script src="floating-preview.js"></script>
+  </body>
+</html>

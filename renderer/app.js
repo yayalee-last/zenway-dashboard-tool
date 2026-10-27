@@ -36,8 +36,7 @@ const RESOLUTION_LABEL = {
   tostory: '转需求',
 };
 
-const DONE = new Set(['done', 'closed', 'cancel']);
-const RANK = { overdue: 0, today: 1, soon: 2, later: 3 };
+const { daysUntil, urgentOf, isDone, compareItems } = window.ItemOrder;
 
 const S = {
   items: [],
@@ -51,30 +50,6 @@ const S = {
 
 /* ---------------- 工具 ---------------- */
 
-function daysUntil(dateStr) {
-  if (!dateStr) return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const d = new Date(`${dateStr}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return null;
-  return Math.round((d - today) / 86400000);
-}
-
-function urgentOf(item) {
-  const n = daysUntil(item.deadline);
-  if (n === null) return 'later';
-  if (n < 0) return 'overdue';
-  if (n === 0) return 'today';
-  if (n <= 3) return 'soon';
-  return 'later';
-}
-
-function isDone(it) {
-  const s = String(it.status || '').toLowerCase();
-  // 缺陷的 resolved 还没关闭，仍算在手头（等确认/关闭）
-  if (it.kind === 'bug') return s === 'closed' || s === 'cancel';
-  return DONE.has(s);
-}
 
 function fmtClock(ts) {
   if (!ts) return '--:--';
@@ -121,17 +96,8 @@ function visibleItems() {
   if (f === 'open') arr = arr.filter((i) => !isDone(i));
   else if (f === 'bug') arr = arr.filter((i) => i.kind === 'bug' && !isDone(i));
   else if (f === 'overdue') arr = arr.filter((i) => !isDone(i) && daysUntil(i.deadline) !== null && daysUntil(i.deadline) < 0);
-  else if (f === 'today') arr = arr.filter((i) => !isDone(i) && daysUntil(i.deadline) === 0);
 
-  arr.sort((a, b) => {
-    const ra = RANK[urgentOf(a)];
-    const rb = RANK[urgentOf(b)];
-    if (ra !== rb) return ra - rb;
-    const da = a.deadline || '9999-12-31';
-    const db = b.deadline || '9999-12-31';
-    if (da !== db) return da < db ? -1 : 1;
-    return (a.pri || 9) - (b.pri || 9);
-  });
+  arr.sort(compareItems);
   return arr;
 }
 
@@ -1026,6 +992,9 @@ function openSettings() {
   $('f-alwaysOnTop').checked = Boolean(S.cfg.alwaysOnTop);
   $('f-autoLaunch').checked = Boolean(S.cfg.autoLaunch);
   $('f-autoUpdate').checked = S.cfg.autoUpdate !== false;
+  $('f-showTopThree').checked = Boolean(S.cfg.showTopThree);
+  $('f-previewSide').value = S.cfg.previewSide || 'left';
+  $('f-displayMode').value = S.cfg.displayMode || 'ball';
   updateNote('');
   // 后台已经探到新版本的话，打开设置就把话说清楚，别让人自己去猜
   if (S.up && S.up.hasUpdate && S.up.latest) {
@@ -1085,6 +1054,9 @@ function readForm() {
     alwaysOnTop: $('f-alwaysOnTop').checked,
     autoLaunch: $('f-autoLaunch').checked,
     autoUpdate: $('f-autoUpdate').checked,
+    showTopThree: $('f-showTopThree').checked,
+    previewSide: $('f-previewSide').value,
+    displayMode: $('f-displayMode').value,
   };
 }
 
@@ -1202,6 +1174,12 @@ function bind() {
     renderAll();
   });
   window.zt.onOpenSettings(openSettings);
+  window.zt.onOpenItem(async (item) => {
+    closeSettings();
+    closeTaskAction();
+    closeBugAction();
+    await openDetail(item);
+  });
 
   // 更新相关
   $('btn-check-update').addEventListener('click', checkUpdateManual);

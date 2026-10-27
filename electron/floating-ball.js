@@ -2,9 +2,12 @@
 
 const path = require('node:path');
 const { BrowserWindow, screen } = require('electron');
+const { isDone, compareItems, urgentOf } = require('../renderer/item-order');
 
 const SIZE = 64;
 const COLLAPSE_DELAY = 250;
+const PREVIEW_WIDTH = 280;
+const PREVIEW_GAP = 6;
 
 function contains(bounds, point) {
   return point.x >= bounds.x && point.x < bounds.x + bounds.width
@@ -39,6 +42,12 @@ function createFloatingBall(panel, savedPosition, onMove) {
   let collapseTimer = null;
   let moveTimer = null;
   let pointerTimer = null;
+  let preview = null;
+  let previewReady = false;
+  let previewEnabled = false;
+  let previewSide = 'left';
+  let previewItems = [];
+  let displayMode = null;
 
   function pinBall() {
     ball.setAlwaysOnTop(true, process.platform === 'win32' ? 'pop-up-menu' : 'floating');
@@ -52,20 +61,106 @@ function createFloatingBall(panel, savedPosition, onMove) {
   function resetHover() {
     engaged = false;
     cancelCollapse();
+    syncPreview();
+  }
+
+  function positionBeside(target, side = 'left', gap = 0) {
+    const anchor = ball.getBounds();
+    const work = screen.getDisplayMatching(anchor).workArea;
+    const [width, height] = target.getSize();
+    const left = anchor.x - width - gap;
+    const right = anchor.x + SIZE + gap;
+    const preferred = side === 'right' ? right : left;
+    const alternate = side === 'right' ? left : right;
+    const fits = preferred >= work.x && preferred + width <= work.x + work.width;
+    const px = Math.max(work.x, Math.min(fits ? preferred : alternate, work.x + work.width - width));
+    const py = Math.max(work.y, Math.min(anchor.y, work.y + work.height - height));
+    target.setPosition(px, py);
   }
 
   function positionPanel() {
-    const anchor = ball.getBounds();
-    const work = screen.getDisplayMatching(anchor).workArea;
-    const [width, height] = panel.getSize();
-    const left = anchor.x - width;
-    const right = anchor.x + SIZE;
-    const preferred = left >= work.x ? left : right;
-    const px = Math.max(work.x, Math.min(preferred, work.x + work.width - width));
-    const py = Math.max(work.y, Math.min(anchor.y, work.y + work.height - height));
-    panel.setPosition(px, py);
+    positionBeside(panel);
   }
 
+  function keepBallOnScreen() {
+    const bounds = ball.getBounds();
+    const work = screen.getDisplayMatching(bounds).workArea;
+    const px = Math.max(work.x, Math.min(bounds.x, work.x + work.width - SIZE));
+    const py = Math.max(work.y, Math.min(bounds.y, work.y + work.height - SIZE));
+    if (px !== bounds.x || py !== bounds.y) ball.setPosition(px, py);
+    return { x: px, y: py };
+  }
+
+  function hidePreview() {
+    preview?.hide();
+  }
+
+  function syncPreview() {
+    if (!preview || !previewReady) return;
+    if (!previewEnabled || !previewItems.length || panel.isVisible() || !ball.isVisible()) {
+      preview.hide();
+      return;
+    }
+    preview.setBounds({ width: PREVIEW_WIDTH, height: 44 + previewItems.length * 36 });
+    positionBeside(preview, previewSide, PREVIEW_GAP);
+    preview.webContents.send('preview-items', previewItems);
+    preview.showInactive();
+  }
+
+  function createPreview() {
+    preview = new BrowserWindow({
+      width: PREVIEW_WIDTH,
+      height: 152,
+      frame: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      hasShadow: false,
+      resizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      focusable: false,
+      show: false,
+      title: '禅道常驻待办',
+      webPreferences: {
+        preload: path.join(__dirname, 'preview-preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    preview.setAlwaysOnTop(true, process.platform === 'win32' ? 'pop-up-menu' : 'floating');
+    preview.webContents.on('ipc-message', (_event, channel, requested) => {
+      if (channel !== 'preview:open') return;
+      const item = previewItems.find(item => item.id === requested?.id && item.kind === requested?.kind);
+      if (!item) return;
+      showPanel(true);
+      panel.webContents.send('open-item', { id: item.id, kind: item.kind });
+    });
+    preview.once('ready-to-show', () => {
+      previewReady = true;
+      syncPreview();
+    });
+    preview.loadFile(path.join(__dirname, '..', 'renderer', 'floating-preview.html'));
+  }
+
+  function updatePreview(config, items) {
+    previewEnabled = Boolean(config.showTopThree);
+    previewSide = config.previewSide === 'right' ? 'right' : 'left';
+    previewItems = items.filter(item => !isDone(item)).sort(compareItems).slice(0, 3)
+      .map(item => ({ id: item.id, kind: item.kind || 'task', name: item.name, urgent: urgentOf(item) }));
+    if (previewEnabled && previewItems.length && !preview) createPreview();
+    keepBallOnScreen();
+    syncPreview();
+  }
+
+  function setDisplayMode(mode) {
+    if (displayMode === mode) return;
+    displayMode = mode;
+    cancelCollapse();
+    engaged = panel.isVisible();
+    if (mode === 'panel') showPanel();
+  }
   function showPanel(focus = false) {
     cancelCollapse();
     positionPanel();
@@ -78,6 +173,7 @@ function createFloatingBall(panel, savedPosition, onMove) {
   }
 
   function trackPointer() {
+    if (displayMode !== 'ball') return;
     const point = screen.getCursorScreenPoint();
     const overBall = contains(ball.getBounds(), point);
     const overPanel = panel.isVisible() && contains(panel.getBounds(), point);
@@ -98,31 +194,34 @@ function createFloatingBall(panel, savedPosition, onMove) {
     pointerTimer = setInterval(trackPointer, 80);
   });
   ball.on('show', pinBall);
+  ball.on('show', syncPreview);
+  ball.on('hide', hidePreview);
   ball.on('move', () => {
     if (panel.isVisible()) positionPanel();
+    syncPreview();
     clearTimeout(moveTimer);
     moveTimer = setTimeout(() => {
-      const bounds = ball.getBounds();
-      const work = screen.getDisplayMatching(bounds).workArea;
-      const px = Math.max(work.x, Math.min(bounds.x, work.x + work.width - SIZE));
-      const py = Math.max(work.y, Math.min(bounds.y, work.y + work.height - SIZE));
-      if (px !== bounds.x || py !== bounds.y) ball.setPosition(px, py);
-      onMove({ x: px, y: py });
+      onMove(keepBallOnScreen());
     }, 300);
   });
   panel.on('resize', positionPanel);
   panel.on('hide', resetHover);
+  panel.on('show', hidePreview);
   ball.loadFile(path.join(__dirname, '..', 'renderer', 'floating-ball.html'));
 
   return {
     window: ball,
     showPanel,
+    updatePreview,
+    setDisplayMode,
     destroy() {
       clearInterval(pointerTimer);
       clearTimeout(moveTimer);
       cancelCollapse();
       panel.removeListener('resize', positionPanel);
       panel.removeListener('hide', resetHover);
+      panel.removeListener('show', hidePreview);
+      preview?.destroy();
       ball.destroy();
     },
   };

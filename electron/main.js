@@ -22,6 +22,9 @@ const DEFAULT_CONFIG = {
   alwaysOnTop: true,
   autoLaunch: false,
   autoUpdate: true,
+  showTopThree: false,
+  previewSide: 'left',
+  displayMode: 'ball',
   bounds: null,
   ballPosition: null,
 };
@@ -150,6 +153,7 @@ function createWindow() {
       if (process.argv.includes('--setup')) showAndFocus();
     }
     pushState();
+    if (process.argv.includes('--background')) win.hide();
   });
 
   // 调试用：--shot=<png路径> 截一张图后退出
@@ -546,6 +550,8 @@ async function inlineDescImages(html) {
 
 function pushState() {
   if (win && !win.isDestroyed()) win.webContents.send('state', state);
+  floatingBall?.setDisplayMode(config.displayMode);
+  floatingBall?.updatePreview(config, state.items);
   updateTrayMenu();
 }
 
@@ -716,6 +722,8 @@ function wireIpc() {
     client.applyConfig(config);
     if ('autoLaunch' in patch) app.setLoginItemSettings({ openAtLogin: Boolean(patch.autoLaunch), args: ['--background'] });
     syncWindowPin();
+    floatingBall?.setDisplayMode(config.displayMode);
+    floatingBall?.updatePreview(config, state.items);
     schedule();
     if (autoUpdateWasEnabled !== (config.autoUpdate !== false)) scheduleUpdateChecks(0);
     client.projectCache = null;
@@ -994,7 +1002,6 @@ if (!gotLock) {
 
     scheduleUpdateChecks();
 
-    if (process.argv.includes('--background')) win.hide();
   });
 
   app.on('window-all-closed', () => {

@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('zt', {
   openRelease: () => ipcRenderer.invoke('update:open-release'),
   onState: (fn) => ipcRenderer.on('state', (_e, s) => fn(s)),
   onOpenSettings: (fn) => ipcRenderer.on('open-settings', () => fn()),
+  onOpenItem: (fn) => ipcRenderer.on('open-item', (_event, item) => fn(item)),
   onUpdate: (fn) => ipcRenderer.on('update', (_e, s) => fn(s)),
   onOpenUpdate: (fn) => ipcRenderer.on('open-update', () => fn()),
 });

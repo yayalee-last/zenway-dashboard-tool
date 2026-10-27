@@ -59,7 +59,6 @@
         <button class="tab active" data-filter="open"><svg class="glyph" aria-hidden="true"><use href="#i-inbox"></use></svg><span>未完成</span></button>
         <button class="tab" data-filter="bug"><svg class="glyph" aria-hidden="true"><use href="#i-bug"></use></svg><span>缺陷</span></button>
         <button class="tab" data-filter="overdue"><svg class="glyph" aria-hidden="true"><use href="#i-clock"></use></svg><span>逾期</span></button>
-        <button class="tab" data-filter="today"><svg class="glyph" aria-hidden="true"><use href="#i-sun"></use></svg><span>今天</span></button>
         <button class="tab" data-filter="all"><svg class="glyph" aria-hidden="true"><use href="#i-layers"></use></svg><span>全部</span></button>
       </nav>
 
@@ -147,6 +146,23 @@
             <input id="f-autoUpdate" type="checkbox" />
             <span>自动检查新版本（每 5 分钟）</span>
           </label>
+          <label class="field">
+            <span>显示模式</span>
+            <select id="f-displayMode">
+              <option value="ball">悬浮球（默认，悬停展开）</option>
+              <option value="panel">常驻完整面板</option>
+            </select>
+          </label>
+          <div class="row preview-options">
+            <label class="check">
+              <input id="f-showTopThree" type="checkbox" />
+              <span>常驻显示前三条待办</span>
+            </label>
+            <select id="f-previewSide" aria-label="常驻待办优先显示位置">
+              <option value="left">优先左侧</option>
+              <option value="right">优先右侧</option>
+            </select>
+          </div>
 
           <div class="ver-line">
             <span id="ver-text">v—</span>
@@ -234,6 +250,7 @@
       <div class="toast" id="toast" hidden></div>
     </div>
 
+    <script src="item-order.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

@@ -53,7 +53,7 @@ test('starting a task preserves its assignee and keeps it in open and all lists'
   assert.equal(items.length, 1);
   assert.equal(items[0].status, 'doing');
   const source = fs.readFileSync(path.join(__dirname, '../renderer/app.js'), 'utf8').split('(async function init()')[0];
-  const context = vm.createContext({});
+  const context = vm.createContext({ window: { ItemOrder: require('../renderer/item-order') } });
   vm.runInContext(source, context);
   context.items = items;
   for (const filter of ['open', 'all']) {

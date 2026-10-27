@@ -1503,6 +1503,17 @@ input:focus, select:focus, textarea:focus {
   width: 14px;
   height: 14px;
 }
+.preview-options {
+  align-items: center;
+  justify-content: space-between;
+}
+.preview-options .check {
+  white-space: nowrap;
+}
+.preview-options select {
+  width: auto;
+  flex: none;
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     transition: none !important;
