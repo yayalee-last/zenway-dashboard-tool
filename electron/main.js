@@ -25,6 +25,7 @@ const DEFAULT_CONFIG = {
   showTopThree: false,
   previewSide: 'left',
   displayMode: 'ball',
+  sortMode: 'priority',
   bounds: null,
   ballPosition: null,
 };

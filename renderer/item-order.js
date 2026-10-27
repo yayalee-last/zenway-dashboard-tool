@@ -33,14 +33,21 @@
     return DONE.has(s);
   }
 
-  function compareItems(a, b) {
+  function compareItems(a, b, mode = 'priority') {
+    if (mode === 'completed') {
+      const ready = (item) => String(item.status || '').toLowerCase() === (item.kind === 'bug' ? 'resolved' : 'done');
+      const completed = Number(ready(b)) - Number(ready(a));
+      if (completed) return completed;
+    }
+    const priority = (a.pri || 9) - (b.pri || 9);
+    if (priority) return priority;
     const ra = RANK[urgentOf(a)];
     const rb = RANK[urgentOf(b)];
     if (ra !== rb) return ra - rb;
     const da = a.deadline || '9999-12-31';
     const db = b.deadline || '9999-12-31';
     if (da !== db) return da < db ? -1 : 1;
-    return (a.pri || 9) - (b.pri || 9);
+    return 0;
   }
 
   return { daysUntil, urgentOf, isDone, compareItems };

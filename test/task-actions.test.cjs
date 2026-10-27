@@ -87,3 +87,27 @@ test('start retains its existing work-hour validation without changing data', as
   assert.equal(f.reads.length, 0);
   assert.equal(f.writes.length, 0);
 });
+
+test('priority sorting places P1 before overdue lower priorities and keeps equal-priority deadlines ordered', () => {
+  const { compareItems } = require('../renderer/item-order');
+  const items = [
+    { id: 1, pri: 3, deadline: '2000-01-01' },
+    { id: 2, pri: 1, deadline: '2099-01-01' },
+    { id: 3, pri: 1, deadline: '2099-02-01' },
+    { id: 4, pri: 0 },
+    { id: 5, pri: 2 },
+  ];
+  assert.deepEqual(items.sort((a, b) => compareItems(a, b, 'priority')).map(item => item.id), [2, 3, 5, 1, 4]);
+});
+
+test('completed sorting brings tasks awaiting closure and resolved bugs first without promoting closed or cancelled items', () => {
+  const { compareItems } = require('../renderer/item-order');
+  const items = [
+    { id: 1, pri: 1, status: 'doing' },
+    { id: 2, pri: 3, status: 'done' },
+    { id: 3, pri: 4, status: 'resolved', kind: 'bug' },
+    { id: 4, pri: 2, status: 'closed' },
+    { id: 5, pri: 2, status: 'cancel' },
+  ];
+  assert.deepEqual(items.sort((a, b) => compareItems(a, b, 'completed')).map(item => item.id), [2, 3, 1, 4, 5]);
+});

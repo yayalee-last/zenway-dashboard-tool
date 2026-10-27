@@ -97,11 +97,12 @@ function visibleItems() {
   else if (f === 'bug') arr = arr.filter((i) => i.kind === 'bug' && !isDone(i));
   else if (f === 'overdue') arr = arr.filter((i) => !isDone(i) && daysUntil(i.deadline) !== null && daysUntil(i.deadline) < 0);
 
-  arr.sort(compareItems);
+  arr.sort((a, b) => compareItems(a, b, S.cfg.sortMode));
   return arr;
 }
 
 function renderList() {
+  $('list-sort').hidden = S.filter !== 'all';
   const list = $('list');
   const items = visibleItems();
   list.replaceChildren();
@@ -202,10 +203,11 @@ function renderItem(it) {
   body.append(meta);
   row.append(body);
 
-  // 快速流转：待开始 → 开始；进行中 → 完成
+  // 快速流转：未开始 → 开始；进行中 → 完成；已完成 → 关闭
   const acts = el('div', 'acts');
   if (statusLower === 'wait') acts.append(mkAct('开始', 'start', it));
   else if (statusLower === 'doing') acts.append(mkAct('完成', 'finish', it));
+  else if (statusLower === 'done') acts.append(mkAct('关闭', 'close', it));
   if (acts.children.length) row.append(acts);
 
   row.addEventListener('click', () => {
@@ -274,7 +276,7 @@ function mkBugAct(text, action, it) {
 
 function mkAct(text, action, it) {
   const b = el('button', `act ${action}`, text);
-  b.prepend(glyph(action === 'start' ? 'play' : 'check'));
+  b.prepend(glyph(action === 'start' ? 'play' : action === 'close' ? 'close' : 'check'));
   b.addEventListener('click', (e) => {
     e.stopPropagation();
     openTaskAction(action, it);
@@ -365,7 +367,10 @@ let pending = null;
 function openTaskAction(action, it) {
   pending = { action, it };
   const finishing = action === 'finish';
-  $('tm-title').textContent = finishing ? '完成任务' : '开始任务';
+  const closing = action === 'close';
+  $('tm-title').textContent = closing ? '关闭任务' : finishing ? '完成任务' : '开始任务';
+  $('tm-hours').hidden = closing;
+  $('tm-close-note').hidden = !closing;
   $('tm-task').textContent = it.name;
   $('tm-consumed-label').textContent = finishing ? '本次消耗（小时）' : '预计消耗（小时）';
   $('tm-consumed').value = finishing ? String(it.left || 0) : '0.5';
@@ -374,6 +379,11 @@ function openTaskAction(action, it) {
   $('tm-ok').disabled = false;
   $('tm-ok').textContent = '确认';
   $('task-modal').hidden = false;
+  if (closing) {
+    window.zt.resize(320);
+    $('tm-ok').focus();
+    return;
+  }
   $('tm-consumed').focus();
   $('tm-consumed').select();
 }
@@ -381,18 +391,21 @@ function openTaskAction(action, it) {
 function closeTaskAction() {
   $('task-modal').hidden = true;
   pending = null;
+  requestAnimationFrame(autoHeight);
 }
 
 async function confirmTaskAction() {
   if (!pending) return;
+  const { action, it } = pending;
   const consumed = Number($('tm-consumed').value) || 0;
   const left = Number($('tm-left').value) || 0;
   const btn = $('tm-ok');
   btn.disabled = true;
   btn.textContent = '提交中…';
 
-  const payload = pending.action === 'finish' ? { currentConsumed: consumed, left } : { consumed, left };
-  const r = await window.zt.taskAction({ id: pending.it.id, action: pending.action, payload });
+  const payload = action === 'close' ? { closedReason: 'done' }
+    : action === 'finish' ? { currentConsumed: consumed, left } : { consumed, left };
+  const r = await window.zt.taskAction({ id: it.id, action, payload });
 
   btn.disabled = false;
   btn.textContent = '确认';
@@ -403,9 +416,8 @@ async function confirmTaskAction() {
     return;
   }
 
-  const done = pending.action === 'finish';
   closeTaskAction();
-  toast(done ? '已完成' : '已开始', 'ok');
+  toast(action === 'close' ? '任务已关闭' : action === 'finish' ? '已完成' : '已开始', 'ok');
   if (DT.open && DT.data && DT.data.id) loadDetail(DT.data.id);
 }
 
@@ -695,7 +707,8 @@ function renderDetail(t) {
   // 底部动作
   const foot = $('dt-foot');
   foot.replaceChildren();
-  const act = st === 'wait' ? ['start', '开始任务'] : st === 'doing' ? ['finish', '完成任务'] : null;
+  const act = st === 'wait' ? ['start', '开始任务'] : st === 'doing' ? ['finish', '完成任务']
+    : st === 'done' ? ['close', '关闭任务'] : null;
   if (act) {
     const b = el('button', 'btn primary', act[1]);
     b.addEventListener('click', () => openTaskAction(act[0], t));
@@ -924,6 +937,7 @@ function renderAll() {
   renderStatus();
   renderUpdate();
   syncPin();
+  $('sort-mode').value = S.cfg.sortMode || 'priority';
   if (DT.open) return;
   renderList();
   requestAnimationFrame(autoHeight);
@@ -1101,6 +1115,11 @@ async function saveSettings() {
 
 function bind() {
   $('btn-refresh').addEventListener('click', doRefresh);
+  $('sort-mode').addEventListener('change', async () => {
+    S.cfg.sortMode = $('sort-mode').value;
+    renderAll();
+    apply(await window.zt.saveConfig({ sortMode: S.cfg.sortMode }));
+  });
   $('btn-set').addEventListener('click', openSettings);
   $('btn-settings-link').addEventListener('click', openSettings);
   $('btn-hide').addEventListener('click', () => window.zt.minimize());

@@ -149,7 +149,7 @@ function createFloatingBall(panel, savedPosition, onMove) {
   function updatePreview(config, items) {
     previewEnabled = Boolean(config.showTopThree);
     previewSide = config.previewSide === 'right' ? 'right' : 'left';
-    previewItems = items.filter(item => !isDone(item)).sort(compareItems).slice(0, 3)
+    previewItems = items.filter(item => !isDone(item)).sort((a, b) => compareItems(a, b, config.sortMode)).slice(0, 3)
       .map(item => ({ id: item.id, kind: item.kind || 'task', name: item.name, urgent: urgentOf(item) }));
     if (previewEnabled && previewItems.length && !preview) createPreview();
     keepOnScreen(ball);

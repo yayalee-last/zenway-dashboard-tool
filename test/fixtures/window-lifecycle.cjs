@@ -247,7 +247,14 @@ app.whenReady().then(async () => {
     await waitUntil(() => previewWindow()?.isVisible());
     let preview = previewWindow();
     await pause(100);
-    assert.deepEqual(await previewIds(preview), [10231, 1049, 10188], 'preview must match the first three unfinished rows, including bugs');
+    assert.deepEqual(await previewIds(preview), [10231, 1034, 10188], 'preview must follow priority order, including bugs');
+    await win.webContents.executeJavaScript("document.getElementById('sort-mode').value = 'completed'; document.getElementById('sort-mode').dispatchEvent(new Event('change', {bubbles:true}))");
+    await pause(150);
+    assert.deepEqual(await previewIds(preview), [1048, 10231, 1034], 'completed-first sorting must also prioritize resolved bugs awaiting closure in the preview');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(profile, 'config.json'), 'utf8')).sortMode, 'completed');
+    await win.webContents.executeJavaScript("document.getElementById('sort-mode').value = 'priority'; document.getElementById('sort-mode').dispatchEvent(new Event('change', {bubbles:true}))");
+    await pause(150);
+    assert.deepEqual(await previewIds(preview), [10231, 1034, 10188]);
     assert.equal(preview.isAlwaysOnTop(), true);
     assert.equal(preview.isFocusable(), false);
     assert.equal(win.isVisible(), false, 'preview must not expand the full panel');
@@ -260,7 +267,7 @@ app.whenReady().then(async () => {
       preview.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
       await pause(150);
     };
-    for (const item of [{ index: 0, id: 10231, kind: 'task' }, { index: 1, id: 1049, kind: 'bug' }]) {
+    for (const item of [{ index: 0, id: 10231, kind: 'task' }, { index: 1, id: 1034, kind: 'bug' }]) {
       if (item.kind === 'bug') await win.webContents.executeJavaScript('openSettings()');
       await clickPreviewRow(item.index);
       assert.equal(win.isVisible(), true, 'clicking a preview row must open the full panel');
@@ -327,7 +334,7 @@ app.whenReady().then(async () => {
     replaceItems(originalItems);
     await pause(100);
     assert.equal(preview.isVisible(), true, 'state updates must restore the preview when tasks appear');
-    assert.deepEqual(await previewIds(preview), [10231, 1049, 10188]);
+    assert.deepEqual(await previewIds(preview), [10231, 1034, 10188]);
 
     await win.webContents.executeJavaScript(
       "openSettings(); document.getElementById('f-showTopThree').checked = false; saveSettings()");
