@@ -10,7 +10,7 @@ const { promisify } = require('node:util');
 
 const execFileAsync = promisify(execFile);
 
-test('Windows widget keeps its pin through window changes and idle refresh', {
+test('Windows floating ball expands on hover and preserves widget window state', {
   skip: process.platform !== 'win32', timeout: 60000,
 }, async t => {
   const output = fs.mkdtempSync(path.join(os.tmpdir(), 'zentao-window-test-'));

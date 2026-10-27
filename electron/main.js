@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, screen } = require('electron');
 const { ZentaoClient, ZentaoError, normalizeBaseUrl } = require('./zentao');
 const { Updater } = require('./updater');
+const { createFloatingBall } = require('./floating-ball');
 
 app.setName('zentao-widget');
 
@@ -22,9 +23,11 @@ const DEFAULT_CONFIG = {
   autoLaunch: false,
   autoUpdate: true,
   bounds: null,
+  ballPosition: null,
 };
 
 let win = null;
+let floatingBall = null;
 let tray = null;
 let client = null;
 let config = { ...DEFAULT_CONFIG };
@@ -140,7 +143,12 @@ function createWindow() {
   });
 
   win.once('ready-to-show', () => {
-    win.show();
+    if (shotArg) {
+      win.show();
+    } else {
+      floatingBall = createFloatingBall(win, config.ballPosition, (ballPosition) => saveConfig({ ballPosition }));
+      if (process.argv.includes('--setup')) showAndFocus();
+    }
     pushState();
   });
 
@@ -250,10 +258,7 @@ function createWindow() {
 function toggleWindow() {
   if (!win) return createWindow();
   if (win.isVisible()) win.hide();
-  else {
-    win.show();
-    win.focus();
-  }
+  else showAndFocus();
   updateTrayMenu();
 }
 
@@ -612,9 +617,12 @@ function schedule() {
 
 function showAndFocus() {
   if (!win) return createWindow();
-  if (!win.isVisible()) win.show();
+  if (floatingBall) floatingBall.showPanel(true);
+  else {
+    win.show();
+    win.focus();
+  }
   syncWindowPin();
-  win.focus();
 }
 
 /* ---------------- IPC ---------------- */
@@ -940,7 +948,7 @@ function wireIpc() {
   ipcMain.handle('win:minimize', () => win?.hide());
   ipcMain.handle('win:resize', (_e, h) => {
     if (!win || !Number.isFinite(h)) return;
-    const area = screen.getPrimaryDisplay().workArea;
+    const area = screen.getDisplayMatching(win.getBounds()).workArea;
     const [w] = win.getSize();
     const [x, y] = win.getPosition();
     const target = Math.max(200, Math.min(area.height - 80, Math.round(h)));
@@ -997,5 +1005,6 @@ if (!gotLock) {
     app.__quitting = true;
     clearInterval(timer);
     clearTimeout(updateTimer);
+    floatingBall?.destroy();
   });
 }

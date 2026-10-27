@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, screen } = require('electron');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -23,7 +23,7 @@ const main = new Module(source, module);
 main.filename = source;
 main.paths = Module._nodeModulePaths(path.dirname(source));
 main._compile(fs.readFileSync(source, 'utf8') + `
-module.exports = { getWindow: () => win, getState: () => state, toggleWindow, showAndFocus, doRefresh, buildTrayMenu };
+module.exports = { getWindow: () => win, getFloatingBall: () => floatingBall, getState: () => state, toggleWindow, showAndFocus, doRefresh, buildTrayMenu };
 `, source);
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -33,13 +33,75 @@ const report = value => fs.writeFileSync(path.join(output, 'result.json'), JSON.
 app.whenReady().then(async () => {
   let peer;
   const win = main.exports.getWindow();
+  const outside = { x: -100000, y: -100000 };
+  let cursor = outside;
+  screen.getCursorScreenPoint = () => cursor;
   const snapshot = label => samples.push({ label, visible: win.isVisible(), pinned: win.isAlwaysOnTop(), bounds: win.getBounds() });
   try {
     const deadline = Date.now() + 10000;
-    while (!win.isVisible() || win.webContents.isLoading()) {
+    while (!main.exports.getFloatingBall()?.window.isVisible() || win.webContents.isLoading()) {
       if (Date.now() > deadline) throw new Error('Window did not become ready');
       await pause(50);
     }
+    const ball = main.exports.getFloatingBall().window;
+    const originalBall = ball.getBounds();
+    const enterBall = () => {
+      const bounds = ball.getBounds();
+      cursor = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+    };
+    const enterPanel = () => {
+      const bounds = win.getBounds();
+      cursor = { x: bounds.x + 24, y: bounds.y + 24 };
+    };
+    assert.equal(win.isVisible(), false, 'startup must show only the floating ball');
+    assert.equal(ball.isAlwaysOnTop(), true);
+    assert.equal(ball.isFocusable(), false, 'the ball must not steal focus');
+    enterBall();
+    await pause(200);
+    assert.equal(win.isVisible(), true, 'hovering the ball must open the panel');
+    assert.equal(win.isFocused(), false, 'hover must not steal keyboard focus');
+    const hoverHeight = win.getSize()[1];
+    fs.writeFileSync(path.join(output, 'ball.png'), (await ball.capturePage()).toPNG());
+    fs.writeFileSync(path.join(output, 'hover-panel.png'), (await win.capturePage()).toPNG());
+    enterPanel();
+    await pause(400);
+    assert.equal(win.isVisible(), true, 'moving from the ball into the panel must keep it open');
+    cursor = outside;
+    await pause(160);
+    assert.equal(win.isVisible(), true, 'a brief departure must allow crossing the gap');
+    enterPanel();
+    await pause(400);
+    assert.equal(win.isVisible(), true, 're-entering must cancel pending collapse');
+    cursor = outside;
+    await pause(450);
+    assert.equal(win.isVisible(), false, 'leaving both regions must collapse the panel');
+    assert.equal(ball.isVisible(), true, 'collapse must leave the floating ball visible');
+    await main.exports.doRefresh('timer');
+    assert.equal(win.isVisible(), false, 'background refresh must not expand the panel');
+    enterBall();
+    await pause(200);
+    assert.equal(win.getSize()[1], hoverHeight, 'reopening must preserve the panel height');
+
+    const area = screen.getDisplayMatching(originalBall).workArea;
+    ball.setPosition(area.x, area.y);
+    enterBall();
+    await pause(200);
+    assert.equal(win.getBounds().x, ball.getBounds().x + ball.getBounds().width, 'left-edge ball must open the panel beside its right edge');
+    ball.setPosition(area.x + area.width - originalBall.width, area.y + area.height - originalBall.height);
+    enterBall();
+    await pause(200);
+    await win.webContents.executeJavaScript('window.zt.resize(660)');
+    await pause(400);
+    const edgeBounds = win.getBounds();
+    assert(edgeBounds.x >= area.x && edgeBounds.x + edgeBounds.width <= area.x + area.width);
+    assert(edgeBounds.y >= area.y && edgeBounds.y + edgeBounds.height <= area.y + area.height, 'resizing near the bottom must keep the panel on screen');
+    const savedPosition = JSON.parse(fs.readFileSync(path.join(profile, 'config.json'), 'utf8')).ballPosition;
+    assert.deepEqual(savedPosition, { x: ball.getBounds().x, y: ball.getBounds().y }, 'dragged ball position must be saved');
+    ball.setPosition(originalBall.x, originalBall.y);
+    enterBall();
+    await win.webContents.executeJavaScript(`window.zt.resize(${hoverHeight})`);
+    await pause(200);
+    enterPanel();
     await pause(600);
     win.setTitle('禅道挂件 · 修复验证');
     assert.equal(win.isAlwaysOnTop(), true, 'startup must apply the requested pin');
@@ -113,6 +175,15 @@ app.whenReady().then(async () => {
       await pause(100);
       const detailHeight = win.getSize()[1];
       assert.equal(detailHeight, 600, `${kind} detail must open at its intended height`);
+      cursor = outside;
+      await pause(450);
+      assert.equal(win.isVisible(), false, 'detail must collapse on mouse leave');
+      enterBall();
+      await pause(200);
+      assert.equal(win.isVisible(), true);
+      assert.equal(win.getSize()[1], detailHeight, 'hovering again must restore detail height');
+      assert.equal(await win.webContents.executeJavaScript("document.getElementById('detail').hidden"), false, 'collapse must preserve the current detail');
+      enterPanel();
       await sendRelease('v0.3.6', false);
       assert.equal(win.getSize()[1], detailHeight, `update check must preserve ${kind} detail height`);
       await sendRelease('v0.3.7');
