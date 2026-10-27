@@ -548,7 +548,8 @@ class ZentaoClient {
     const c = Number(consumed) || 0;
     const l = Number(left) || 0;
     if (c === 0 && l === 0) throw new ZentaoError('消耗工时和剩余工时不能同时填 0', 0);
-    const body = { consumed: c, left: l, realStarted: realStarted || nowStr() };
+    const task = await this.getTaskDetail(id);
+    const body = { assignedTo: this._accountOf(task), consumed: c, left: l, realStarted: realStarted || nowStr() };
     return this.postJSON(`/tasks/${id}/start`, body);
   }
 
