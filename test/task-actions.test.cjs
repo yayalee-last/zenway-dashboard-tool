@@ -81,9 +81,9 @@ test('start does not write if current assignment cannot be read', async t => {
   assert.equal(f.task.status, 'wait');
 });
 
-test('start retains its existing work-hour validation without changing data', async t => {
+test('start rejects zero remaining hours without changing data instead of auto-completing on 22.6', async t => {
   const f = await fixture(t);
-  await assert.rejects(f.client.startTask(35, { consumed: 0, left: 0 }), /不能同时填 0/);
+  await assert.rejects(f.client.startTask(35, { consumed: 0, left: 0 }), /剩余工时必须大于 0/);
   assert.equal(f.reads.length, 0);
   assert.equal(f.writes.length, 0);
 });

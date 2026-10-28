@@ -5,8 +5,8 @@ const assert = require('node:assert/strict');
 const { mainFixture, rendererFixture } = require('./fixtures/task-children.cjs');
 const { ZentaoClient } = require('../electron/zentao');
 
-const parent = extra => ({ id: 10, name: 'Parent', status: 'doing', assignedTo: 'Me', parent: -1, ...extra });
-const child = (id, status, assignedTo, extra = {}) => ({ id, name: 'Child ' + id, status, assignedTo, left: 0, ...extra });
+const parent = extra => ({ id: 10, name: 'Parent', status: 'doing', deleted: false, assignedTo: 'Me', parent: -1, ...extra });
+const child = (id, status, assignedTo, extra = {}) => ({ id, name: 'Child ' + id, status, deleted: false, assignedTo, left: 0, ...extra });
 const plain = value => JSON.parse(JSON.stringify(value));
 const detail = async (f, id = 10) => {
   const result = await f.invoke('task:detail', id);
@@ -113,7 +113,8 @@ for (const ownership of ['other', '', null, { realname: 'Unknown' }, { account: 
   test('task action rejects reference/uncertain ownership even with forged frontend flags: ' + JSON.stringify(ownership), async () => {
     const f = mainFixture([parent({ assignedTo: ownership })]);
     for (const action of ['start', 'finish', 'close']) {
-      const result = await f.invoke('task:action', { id: 10, action, isMine: true, readOnly: false });
+      const payload = action === 'start' ? { consumed: 1, left: 2 } : action === 'finish' ? { currentConsumed: 1, left: 0 } : { comment: '' };
+      const result = await f.invoke('task:action', { id: 10, action, payload, isMine: true, readOnly: false });
       assert.equal(result.ok, false);
       assert.match(result.error, /明确指派给自己/);
     }
@@ -122,9 +123,10 @@ for (const ownership of ['other', '', null, { realname: 'Unknown' }, { account: 
 }
 
 test('current self owner retains start/finish/close and normal refresh', async () => {
-  const f = mainFixture([parent({ assignedTo: { account: 'mE' } })]);
+  const f = mainFixture([parent({ parent: 0, status: 'wait', assignedTo: { account: 'mE' } })]);
   for (const action of ['start', 'finish', 'close']) {
-    const result = await f.invoke('task:action', { id: 10, action, payload: { consumed: 1, left: 2, closedReason: 'done' } });
+    const payload = action === 'start' ? { consumed: 1, left: 2 } : action === 'finish' ? { currentConsumed: 1, left: 0 } : { comment: '' };
+    const result = await f.invoke('task:action', { id: 10, action, payload });
     assert.equal(result.ok, true, result.error);
   }
   assert.deepEqual(f.writes.map(write => write.method), ['startTask', 'finishTask', 'closeTask']);

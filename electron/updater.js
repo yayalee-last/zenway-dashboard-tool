@@ -19,6 +19,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { APP_ARCHIVE, UPDATE_MANIFEST, UPDATE_SCHEMA } = require('./update-format');
 const path = require('node:path');
 const { execFile, spawn } = require('node:child_process');
+const { safePublicFetch } = require('./request-safety');
 
 const DEFAULT_API =
   'https://api.github.com/repos/yayalee-last/zenway-dashboard-tool/releases/latest';
@@ -102,7 +103,7 @@ class Updater {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
-      const res = await fetch(this.apiUrl, {
+      const res = await safePublicFetch(this.apiUrl, {
         headers: { 'User-Agent': UA, Accept: 'application/json' },
         signal: ac.signal,
       });
@@ -143,7 +144,7 @@ class Updater {
 
       if (hasUpdate && metadata && process.versions.electron) {
         try {
-          const response = await fetch(metadata.browser_download_url, {
+          const response = await safePublicFetch(metadata.browser_download_url, {
             headers: { 'User-Agent': UA },
             signal: ac.signal,
           });
@@ -193,9 +194,8 @@ class Updater {
     const zipPath = path.join(this.updateDir, safeName);
     const partPath = zipPath + '.part';
 
-    const res = await fetch(asset.url, {
+    const res = await safePublicFetch(asset.url, {
       headers: { 'User-Agent': UA },
-      redirect: 'follow',
     });
     if (!res.ok) throw new Error(`下载失败：HTTP ${res.status}`);
 

@@ -28,7 +28,7 @@ ipcMain.handle('win:resize', (_event, height) => {
 });
 ipcMain.handle('task:action', (_event, payload) => {
   writes.push(payload);
-  return { ok: false, error: 'Synthetic permission failure' };
+  return { ok: false, outcome: 'rejected', retrySafe: true, error: 'Synthetic permission failure' };
 });
 
 const js = source => panel.webContents.executeJavaScript(source);
@@ -132,7 +132,7 @@ app.whenReady().then(async () => {
     })()`), true, 'confirmation button must be on screen');
     await js("document.getElementById('tm-ok').click()");
     await until(() => writes.length === 1, 'explicit confirmation');
-    assert.deepEqual(writes[0], { id: 1, action: 'close', payload: { closedReason: 'done' } });
+    assert.deepEqual(writes[0], { id: 1, action: 'close', payload: { comment: '' } });
     assert.equal(await js("document.getElementById('tm-err').textContent"), 'Synthetic permission failure');
     assert.equal(await js("document.getElementById('task-modal').hidden"), false);
     await js("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");

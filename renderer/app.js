@@ -381,22 +381,50 @@ async function toggleTree(row, it, btn) {
 /* ---------------- 快速流转 ---------------- */
 
 let pending = null;
+let taskDialogSeq = 0;
+const taskWrites = new Map();
+const uncertainTaskWrites = new Map();
+
+function actionKey(kind, id) { return `${S.cfg.baseUrl || ''}|${S.cfg.account || ''}|${kind}:${id}`; }
+function setActionError(id, text, uncertain = false, kind = 'task') {
+  const box = $(id);
+  box.hidden = false;
+  box.textContent = text;
+  box.title = '点击在禅道网页查看记录';
+  box.style.cursor = 'pointer';
+  box.onclick = () => {
+    const itemId = kind === 'task' ? (pending && pending.it.id) : (bugPending && bugPending.it.id);
+    if (itemId) window.zt.open(kind === 'task' ? taskUrl(itemId) : bugUrl(itemId));
+  };
+}
+
+function bugUrl(id) {
+  const base = String(S.cfg.baseUrl || '').replace(/\/+$/, '');
+  return `${base}/index.php?m=bug&f=view&id=${id}`;
+}
 
 function openTaskAction(action, it) {
   if (it.readOnly === true || it.isMine === false) return toast('参考任务只读，请在禅道网页处理', 'bad');
-  pending = { action, it };
+  const key = actionKey('task', it.id);
+  pending = { action, it, token: ++taskDialogSeq };
+  const locked = taskWrites.has(key);
+  const uncertain = uncertainTaskWrites.has(key);
   const finishing = action === 'finish';
   const closing = action === 'close';
   $('tm-title').textContent = closing ? '关闭任务' : finishing ? '完成任务' : '开始任务';
   $('tm-hours').hidden = closing;
   $('tm-close-note').hidden = !closing;
+  if (closing) $('tm-close-note').textContent = '确认关闭这条已完成任务？关闭会更新状态和指派信息，不是删除；个人列表可能不再显示。';
   $('tm-task').textContent = it.name;
-  $('tm-consumed-label').textContent = finishing ? '本次消耗（小时）' : '预计消耗（小时）';
-  $('tm-consumed').value = finishing ? String(it.left || 0) : '0.5';
+  $('tm-consumed-label').textContent = finishing ? '本次消耗（小时）' : '总计消耗（小时）';
+  $('tm-consumed').value = finishing ? String(it.left || 0) : String(Number(it.consumed) || 0);
   $('tm-left').value = finishing ? '0' : String(it.left || 0);
+  $('tm-left').disabled = finishing;
   $('tm-err').hidden = true;
-  $('tm-ok').disabled = false;
-  $('tm-ok').textContent = '确认';
+  $('tm-ok').disabled = locked || uncertain;
+  $('tm-ok').textContent = locked ? '请求处理中…' : '确认';
+  if (locked) setActionError('tm-err', '该任务操作仍在处理中，请稍后重新打开操作。', false);
+  else if (uncertain) setActionError('tm-err', '操作结果未能确认。请先在禅道网页检查记录，再重新打开任务详情后操作；不会自动重试。', true);
   $('task-modal').hidden = false;
   if (closing) {
     // outerHeight 与原生窗口同为 DIP；页面缩放后的 innerHeight 会偏小。
@@ -417,37 +445,59 @@ function closeTaskAction() {
 
 async function confirmTaskAction() {
   if (!pending) return;
-  const { action, it } = pending;
+  const session = pending;
+  const { action, it } = session;
+  const key = actionKey('task', it.id);
+  if (taskWrites.has(key) || uncertainTaskWrites.has(key)) return;
   const consumed = Number($('tm-consumed').value) || 0;
-  const left = Number($('tm-left').value) || 0;
+  const left = action === 'finish' ? 0 : (Number($('tm-left').value) || 0);
+  if (action === 'start' && left <= 0) {
+    setActionError('tm-err', '剩余工时必须大于 0；禅道 22.6 会将剩余为 0 的开始操作直接完成。若已完成，请点击此处到禅道网页核对或完成。');
+    return;
+  }
   const btn = $('tm-ok');
   btn.disabled = true;
   btn.textContent = '提交中…';
 
-  const payload = action === 'close' ? { closedReason: 'done' }
+  taskWrites.set(key, session.token);
+  const payload = action === 'close' ? { comment: '' }
     : action === 'finish' ? { currentConsumed: consumed, left } : { consumed, left };
-  const r = await window.zt.taskAction({ id: it.id, action, payload });
-
-  btn.disabled = false;
-  btn.textContent = '确认';
-
-  if (!r.ok) {
-    $('tm-err').hidden = false;
-    $('tm-err').textContent = r.error || '操作失败';
+  let r;
+  try { r = await window.zt.taskAction({ id: it.id, action, payload }); }
+  catch (e) { r = { ok: false, outcome: 'unknown', error: e?.message || '请求结果未知' }; }
+  taskWrites.delete(key);
+  const current = pending === session && session.token === taskDialogSeq && !$('task-modal').hidden;
+  if (r?.ok !== true) {
+    const unknown = r?.outcome !== 'rejected';
+    if (unknown) uncertainTaskWrites.set(key, session.token);
+    if (current) {
+      btn.disabled = unknown;
+      btn.textContent = '确认';
+      setActionError('tm-err', unknown
+        ? `操作结果未知：${r.error || '请求未能确认'}。请先在禅道网页检查记录，再重新打开任务详情后操作；不会自动重试。`
+        : (r?.error || '操作失败，请重试。'), unknown);
+    }
     return;
   }
 
+  if (!current) return;
   closeTaskAction();
-  toast(action === 'close' ? '任务已关闭' : action === 'finish' ? '已完成' : '已开始', 'ok');
-  if (DT.open && DT.data && DT.data.id) loadDetail(DT.data.id);
+  toast(action === 'close' ? '任务已关闭（记录仍保留）' : action === 'finish' ? '已完成，已从「未完成」隐藏；可在「全部」或禅道网页查看' : '已开始', 'ok');
+  if (DT.open && DT.kind === 'task' && DT.id === it.id) loadDetail(DT.id);
 }
 
 /* ---------------- 缺陷流转（解决 / 关闭） ---------------- */
 
 let bugPending = null;
+let bugDialogSeq = 0;
+const bugWrites = new Map();
+const uncertainBugWrites = new Map();
 
 function openBugAction(action, it) {
-  bugPending = { action, it };
+  const key = actionKey('bug', it.id);
+  bugPending = { action, it, token: ++bugDialogSeq };
+  const locked = bugWrites.has(key);
+  const uncertain = uncertainBugWrites.has(key);
   const resolving = action === 'resolve';
   $('bm-title').textContent = resolving ? '解决缺陷' : '关闭缺陷';
   $('bm-task').textContent = it.name || it.title || `缺陷 #${it.id}`;
@@ -458,8 +508,10 @@ function openBugAction(action, it) {
   $('bm-comment').placeholder = resolving ? '改了什么 / 为什么这么解决' : '为什么可以关闭，比如已验证通过';
   $('bm-comment').value = '';
   $('bm-err').hidden = true;
-  $('bm-ok').disabled = false;
-  $('bm-ok').textContent = '确认';
+  $('bm-ok').disabled = locked || uncertain;
+  $('bm-ok').textContent = locked ? '请求处理中…' : '确认';
+  if (locked) setActionError('bm-err', '该缺陷操作仍在处理中，请稍后重新打开操作。', false, 'bug');
+  else if (uncertain) setActionError('bm-err', '操作结果未能确认。请先在禅道网页检查记录，再重新打开缺陷详情后操作；不会自动重试。', true, 'bug');
   $('bug-modal').hidden = false;
   window.zt.resize(560);
   $('bm-comment').focus();
@@ -473,7 +525,10 @@ function closeBugAction() {
 
 async function confirmBugAction() {
   if (!bugPending) return;
-  const { action, it } = bugPending;
+  const session = bugPending;
+  const { action, it } = session;
+  const key = actionKey('bug', it.id);
+  if (bugWrites.has(key) || uncertainBugWrites.has(key)) return;
   const comment = $('bm-comment').value.trim();
   const payload =
     action === 'resolve'
@@ -483,18 +538,28 @@ async function confirmBugAction() {
   const btn = $('bm-ok');
   btn.disabled = true;
   btn.textContent = '提交中…';
-  const r = await window.zt.bugAction({ id: it.id, action, payload });
-  btn.disabled = false;
-  btn.textContent = '确认';
-
-  if (!r.ok) {
-    $('bm-err').hidden = false;
-    $('bm-err').textContent = r.error || '操作失败';
+  bugWrites.set(key, session.token);
+  let r;
+  try { r = await window.zt.bugAction({ id: it.id, action, payload }); }
+  catch (e) { r = { ok: false, outcome: 'unknown', error: e?.message || '请求结果未知' }; }
+  bugWrites.delete(key);
+  const current = bugPending === session && session.token === bugDialogSeq && !$('bug-modal').hidden;
+  if (r?.ok !== true) {
+    const unknown = r?.outcome !== 'rejected';
+    if (unknown) uncertainBugWrites.set(key, session.token);
+    if (current) {
+      btn.disabled = unknown;
+      btn.textContent = '确认';
+      setActionError('bm-err', unknown
+        ? `操作结果未知：${r.error || '请求未能确认'}。请先在禅道网页检查记录，再重新打开缺陷详情后操作；不会自动重试。`
+        : (r?.error || '操作失败，请重试。'), unknown, 'bug');
+    }
     return;
   }
 
+  if (!current) return;
   closeBugAction();
-  toast(action === 'resolve' ? '已标记为解决' : '缺陷已关闭', 'ok');
+  toast(action === 'resolve' ? '已标记为解决' : '缺陷已关闭（记录仍保留）', 'ok');
   if (DT.open && DT.kind === 'bug' && DT.id === it.id) loadBugDetail(it.id);
 }
 
@@ -529,19 +594,27 @@ async function openDetail(it) {
 }
 
 async function loadBugDetail(id) {
-  const r = await window.zt.bugDetail(id);
   if (!DT.open || DT.kind !== 'bug' || DT.id !== id) return;
+  const request = ++DT.request;
+  const key = actionKey('bug', id), uncertainty = uncertainBugWrites.get(key);
+  $('dt-foot').hidden = true;
+  let r;
+  try { r = await window.zt.bugDetail(id); }
+  catch { r = { ok: false, error: '读取缺陷失败，请重试' }; }
+  if (!DT.open || DT.kind !== 'bug' || DT.id !== id || DT.request !== request) return;
   if (!r.ok) {
     $('dt-body').replaceChildren(el('div', 'dt-empty', r.error || '读取失败'));
     return;
   }
   DT.data = r.bug;
+  if (r.bug.writeStateKnown !== false && uncertainty !== undefined && uncertainBugWrites.get(key) === uncertainty && !bugWrites.has(key)) uncertainBugWrites.delete(key);
   renderBugDetail(r.bug);
 }
 
 async function loadDetail(id) {
   if (!DT.open || DT.kind !== 'task' || DT.id !== id) return;
   const request = ++DT.request;
+  const key = actionKey('task', id), uncertainty = uncertainTaskWrites.get(key);
   $('dt-foot').hidden = true;
   let r;
   try {
@@ -556,6 +629,7 @@ async function loadDetail(id) {
     return;
   }
   DT.data = r.task;
+  if (r.task.writeStateKnown !== false && uncertainty !== undefined && uncertainTaskWrites.get(key) === uncertainty && !taskWrites.has(key)) uncertainTaskWrites.delete(key);
   renderDetail(r.task);
 }
 
@@ -830,7 +904,7 @@ function renderBugDetail(b) {
   const foot = $('dt-foot');
   foot.replaceChildren();
   const act = st === 'active' ? ['resolve', '解决缺陷'] : st === 'resolved' ? ['close', '关闭缺陷'] : null;
-  if (act) {
+  if (act && b.writeStateKnown !== false) {
     const btn = el('button', 'btn primary', act[1]);
     btn.addEventListener('click', () => openBugAction(act[0], b));
     foot.append(btn);
@@ -1011,6 +1085,19 @@ async function doRefresh() {
 
 function apply(payload) {
   if (!payload) return;
+  const identityChanged = payload.config && ['baseUrl', 'account', 'password', 'urlMode'].some(key => payload.config[key] !== S.cfg[key]);
+  if (identityChanged) {
+    // Old record IDs/intent belong to the previous connection, not the new one.
+    pending = null; taskDialogSeq++;
+    bugPending = null; bugDialogSeq++;
+    $('task-modal').hidden = true;
+    $('bug-modal').hidden = true;
+    DT.open = false; DT.request++; DT.data = null; DT.id = 0;
+    $('detail').hidden = true;
+    $('dt-foot').hidden = true;
+    $('list').hidden = false;
+    $('tabs').hidden = false;
+  }
   if (payload.config) S.cfg = payload.config;
   if (payload.state) S.st = payload.state;
   if (payload.update) S.up = payload.update;
@@ -1130,12 +1217,24 @@ async function testConn() {
 
 async function saveSettings() {
   const btn = $('btn-save');
+  const result = $('test-result');
   btn.disabled = true;
   btn.textContent = '保存中…';
+  result.hidden = true;
   try {
     const r = await window.zt.saveConfig(readForm());
+    if (r && r.ok === false) {
+      result.classList.add('fail');
+      result.hidden = false;
+      result.textContent = r.error || '保存失败，请重试。';
+      return;
+    }
     closeSettings();
     apply(r);
+  } catch (e) {
+    result.classList.add('fail');
+    result.hidden = false;
+    result.textContent = e?.message || '保存失败，请重试。';
   } finally {
     btn.disabled = false;
     btn.textContent = '保存并刷新';

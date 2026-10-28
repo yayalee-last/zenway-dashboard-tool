@@ -10,6 +10,7 @@
 | --- | --- |
 | `electron/main.js` | 主入口；配置持久化、单实例、面板与托盘、轮询、IPC、富文本/图片、附件打开及更新编排 |
 | `electron/zentao.js` | REST API v1、Token、任务/缺陷聚合与写操作、文件下载、地址清洗 |
+| `electron/request-safety.js` / `action-policy.js` | 请求方法/路由/查询白名单、正整数编号、外部链接与逐跳下载边界、操作参数和现有状态流 |
 | `electron/preload.js` | 通过 `contextBridge` 暴露 `window.zt` 的明确 IPC 方法 |
 | `electron/floating-ball.js` | 悬浮球、常驻面板、前三项预览、多屏定位及显示切换 |
 | `electron/preview-preload.js` | 预览专用的 `window.ztPreview` 桥接 |
@@ -42,7 +43,7 @@
 
    ```sh
    node -e "require('electron')"
-   node --test test/attachments.test.cjs test/task-actions.test.cjs test/task-action-dialog.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs test/release-publish.test.mjs
+   node --test test/attachments.test.cjs test/task-actions.test.cjs test/task-action-dialog.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs test/release-publish.test.mjs test/task-children.test.cjs test/zentao-safety.test.cjs test/action-safety-ipc.test.cjs test/zentao-226-actions.test.cjs test/request-egress.test.cjs
    ```
 
    该准备命令会解析/准备 Electron 运行时，并非完整安装替代。附件用例含真实 Electron UI，需 GUI；窗口和部分更新用例有 Windows 平台限制，Linux 跳过不算验证了 Windows 行为。
@@ -55,6 +56,10 @@
 
 ## IPC 与外部内容边界
 
+- **项目永久规则：挂件不允许删除任何禅道单据。** 不增加删除 API、通用任意请求桥、DELETE/方法覆盖或旧式删除路由；开始/完成/关闭/解决不能映射为删除。维护显式方法+规范路由+查询白名单、对象正整数 ID、外部链接/资源删除路由保护和对应负例，不能只靠按钮隐藏或搜索源码中有无 `DELETE`。
+- 任务/缺陷写入必须校验主窗口主 frame 来源、ID/动作/参数并在写前读当前状态；任务仍只允许当前明确指派给自己。不扩展服务器角色权限或现有窄状态流，不将 stale 动作自动改派为其他动作。处理期间禁止切换连接配置，不能跨服务器/账号做预检、写入、验证。
+- 写请求不得自动重登重放；未知结果不能当作成功、未执行或删除。必须回查同编号、未删除、预期状态才确认成功；未知结果保留记录级重试警告，先通过新详情/网页核对。UI 的取消不等于取消已经发出的请求；重复点击和旧异步响应不得提交第二次或覆盖新操作框。
+- 22.6 合约按 README 所链接的官方源码快照维护：开始的 consumed 是累计且 left 必须大于 0（left=0 会自动完成）；完成传 currentConsumed 并保留原 realStarted；关闭显式传 comment（空字符串也须保留），不要恢复不被该接口接收的 closedReason。用合成 fixtures 复现，不用真实单据验证。
 - 主进程持有网络、文件系统、托盘和系统打开权限；renderer 通过 preload 的窄接口请求，不直接引入 Node、不暴露通用 IPC/任意命令执行通道。
 - 保持 `contextIsolation: true`、`nodeIntegration: false`。当前主面板 `sandbox: false`，浮球/预览 `sandbox: true`；不要写成全应用都已沙箱化，也不要为方便调试进一步放宽限制。
 - 扩展 IPC 时明确校验消息来源、输入类型/范围和权限。renderer 的 URL、路径、名称、ID、动作和配置补丁均是不可信输入；不要照搬现有宽松处理作为新代码标准。

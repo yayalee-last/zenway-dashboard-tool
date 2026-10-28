@@ -24,6 +24,8 @@ const DEFAULTS = {
 
 const CLOSED_EXEC = new Set(['closed', 'suspended']);
 const { taskChildren, isParentTask } = require('./task-context');
+const { positiveId, assertRestOperation, safeExternalUrl } = require('./request-safety');
+const { actionPayload } = require('./action-policy');
 
 /** 缺陷列表每页固定 20 条（recPerPage 传多大都没用） */
 const BUG_PAGE_SIZE = 20;
@@ -62,11 +64,12 @@ function detectUrlMode(input) {
 }
 
 class ZentaoError extends Error {
-  constructor(message, status, body) {
+  constructor(message, status, _body, outcome = 'rejected') {
     super(message);
     this.name = 'ZentaoError';
     this.status = status || 0;
-    this.body = body;
+    // Never retain raw server bodies: they can include HTML, credentials or internal URLs.
+    this.outcome = outcome;
   }
 }
 
@@ -85,12 +88,38 @@ function mapLimit(items, limit, fn) {
 }
 
 /** 禅道的错误体有三种形态：{error:"文本"} / {error:{message:"文本"}} / {message:"文本"} */
-function pickError(body) {
-  if (!body) return '';
-  const e = body.error;
-  if (typeof e === 'string') return e;
-  if (e && typeof e === 'object') return e.message || JSON.stringify(e);
-  return body.message || body.msg || '';
+function pickError(body, secrets = []) {
+  if (!body || typeof body !== 'object') return '';
+  const lines = [];
+  function visit(value, key = '', depth = 0) {
+    if (depth > 3 || lines.length >= 8 || /password|passwd|token|secret|authorization|cookie/i.test(key)) return;
+    if (typeof value === 'string') {
+      // Do not echo HTML pages, stack traces, headers, URLs or configured secrets.
+      let text = value.slice(0, 4000);
+      if (/<\/?[a-z!][^>]*>/i.test(text)) return;
+      if (/\b(?:password|passwd|pwd|token|secret|authorization|cookie)\s*[=:]/i.test(text)) return;
+      for (const secret of secrets) if (typeof secret === 'string' && secret) text = text.split(secret).join('[已隐藏]');
+      text = text.replace(/(?:password|passwd|pwd|token|secret|authorization|cookie)\s*[=:]\s*[^\s,;]+/gi, '[敏感信息已隐藏]')
+        .replace(/https?:\/\/[^\s<>"']+/gi, '[地址已隐藏]')
+        .replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
+      if (text) lines.push((key ? `${key}: ` : '') + text);
+    } else if (Array.isArray(value)) value.slice(0, 4).forEach(entry => visit(entry, key, depth + 1));
+    else if (value && typeof value === 'object') {
+      Object.entries(value).slice(0, 12).forEach(([field, entry]) => {
+        if (/^[a-z][a-z0-9_]{0,40}$/i.test(field)) visit(entry, field === 'message' ? key : field, depth + 1);
+      });
+    }
+  }
+  visit(body.error ?? body.message ?? body.msg);
+  return lines.join('；').slice(0, 480);
+}
+
+function objectId(value, label) {
+  try { return positiveId(value, label); } catch (error) { throw new ZentaoError(error.message, 0); }
+}
+
+function validatedPayload(kind, action, payload) {
+  try { return actionPayload(kind, action, payload); } catch (error) { throw new ZentaoError(error.message, 0); }
 }
 
 /** 只认图片魔数：接口一律回 application/octet-stream，靠响应头分不出类型 */
@@ -148,11 +177,13 @@ class ZentaoClient {
   /* ---------------- http ---------------- */
 
   async _raw(method, path, { json, token, timeout } = {}) {
-    const url = /^https?:/i.test(path) ? path : this.cfg.baseUrl + path;
+    try { assertRestOperation(method, path); } catch (error) { throw new ZentaoError(error.message, 0); }
+    const url = this.cfg.baseUrl + path;
+    if (!safeExternalUrl(url)) throw new ZentaoError('禅道请求地址无效或包含禁止操作', 0);
     const headers = { Accept: 'application/json' };
     const tk = token === null ? null : token !== undefined ? token : this.token;
     if (tk) headers.Token = tk;
-    const init = { method, headers, signal: AbortSignal.timeout(timeout || this.cfg.timeoutMs) };
+    const init = { method, headers, redirect: 'error', signal: AbortSignal.timeout(timeout || this.cfg.timeoutMs) };
     if (json !== undefined) {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(json);
@@ -162,8 +193,11 @@ class ZentaoClient {
       res = await fetch(url, init);
     } catch (e) {
       const hint = String(this.cfg.baseUrl).includes('your-zentao-host') ? '（还是占位地址，先填真实禅道地址）' : '';
-      throw new ZentaoError(`连不上禅道${hint}：${e.message}`, 0);
+      throw new ZentaoError(`连不上禅道${hint}（连接失败、超时或重定向已被阻止）`, 0, null,
+        method === 'POST' && !path.endsWith('/tokens') ? 'unknown' : 'rejected');
     }
+    if (res.status >= 300 && res.status < 400) throw new ZentaoError('禅道重定向已被阻止，请配置最终部署地址', res.status, null,
+      method === 'POST' && !path.endsWith('/tokens') ? 'unknown' : 'rejected');
     const text = await res.text();
     let body = null;
     try {
@@ -186,7 +220,7 @@ class ZentaoClient {
     const tk = r.body && (r.body.token || (r.body.data && r.body.data.token));
     // 禅道 tokens 是 RESTful 的「创建」语义，返回 201 Created，不是 200
     if ((r.status !== 200 && r.status !== 201) || !tk) {
-      const serverMsg = r.body && (r.body.error || r.body.message || r.body.msg);
+      const serverMsg = pickError(r.body, [this.cfg.password, this.token]);
       let msg;
       if (r.status === 404) msg = '这个地址上没有 REST API（后台 → 安全 → API 设置 里开启）';
       else if (serverMsg) msg = String(serverMsg);
@@ -201,6 +235,7 @@ class ZentaoClient {
   }
 
   async getJSON(path) {
+    try { assertRestOperation('GET', '/api.php/v1' + path); } catch (error) { throw new ZentaoError(error.message, 0); }
     await this.ensureToken();
     let r = await this._raw('GET', '/api.php/v1' + path);
     if (r.status === 401 || r.html) {
@@ -208,21 +243,21 @@ class ZentaoClient {
       r = await this._raw('GET', '/api.php/v1' + path);
     }
     if (r.html) throw new ZentaoError('禅道返回了登录页（Token 失效），检查账号密码', 401, null);
-    if (r.status !== 200 && r.status !== 201) throw new ZentaoError(`GET ${path} → HTTP ${r.status}`, r.status, r.body);
+    if (r.status !== 200 && r.status !== 201) throw new ZentaoError(`读取失败（HTTP ${r.status}）${pickError(r.body, [this.cfg.password, this.token]) ? '：' + pickError(r.body, [this.cfg.password, this.token]) : ''}`, r.status);
     return r.body || {};
   }
 
   /** 写操作：POST 到禅道动作端点 */
   async postJSON(path, body = {}) {
+    try { assertRestOperation('POST', '/api.php/v1' + path); } catch (error) { throw new ZentaoError(error.message, 0); }
     await this.ensureToken();
-    let r = await this._raw('POST', '/api.php/v1' + path, { json: body });
-    if (r.status === 401 || r.html) {
-      await this.ensureToken(true);
-      r = await this._raw('POST', '/api.php/v1' + path, { json: body });
-    }
-    if (r.html) throw new ZentaoError('禅道返回了登录页（Token 失效），检查账号密码', 401, null);
+    // A lost response/login page does not prove that a write did not execute.
+    // Never transparently replay an action after reauthentication.
+    const r = await this._raw('POST', '/api.php/v1' + path, { json: body });
+    if (r.html) throw new ZentaoError('禅道返回了登录页；操作结果未确认，请先在网页核对，勿直接重试', 401, null, 'unknown');
     if (r.status !== 200 && r.status !== 201) {
-      throw new ZentaoError(pickError(r.body) || `HTTP ${r.status}`, r.status, r.body);
+      const detail = pickError(r.body, [this.cfg.password, this.token]);
+      throw new ZentaoError(`HTTP ${r.status}${detail ? '：' + detail : ''}`, r.status, null, 'unknown');
     }
     return r.body;
   }
@@ -232,9 +267,11 @@ class ZentaoClient {
    * 但 GET /api.php/v1/files/95 带 Token 能直接吐二进制，转成 data URL 就能渲染。
    */
   async fetchFileDataUrl(fileId) {
+    fileId = objectId(fileId, '图片');
     await this.ensureToken();
-    const url = `${this.cfg.baseUrl}/api.php/v1/files/${encodeURIComponent(fileId)}`;
-    const grab = () => fetch(url, { headers: { Token: this.token }, signal: AbortSignal.timeout(this.cfg.timeoutMs) });
+    const url = `${this.cfg.baseUrl}/api.php/v1/files/${fileId}`;
+    if (!safeExternalUrl(url)) throw new ZentaoError('图片请求地址无效', 0);
+    const grab = () => fetch(url, { headers: { Token: this.token }, redirect: 'error', signal: AbortSignal.timeout(this.cfg.timeoutMs) });
     let r = await grab();
     if (r.status === 401) {
       await this.ensureToken(true);
@@ -250,7 +287,9 @@ class ZentaoClient {
 
   /** 通用附件通过 Token 下载；禁止重定向，避免鉴权头被转发到其他地址。 */
   async downloadFile(fileId, destination) {
-    if (!Number.isSafeInteger(fileId) || fileId <= 0) throw new ZentaoError('附件编号无效', 0);
+    fileId = objectId(fileId, '附件');
+    const url = `${this.cfg.baseUrl}/api.php/v1/files/${fileId}`;
+    if (!safeExternalUrl(url)) throw new ZentaoError('附件请求地址无效', 0);
     const authenticate = async force => {
       try {
         await this.ensureToken(force);
@@ -261,7 +300,7 @@ class ZentaoClient {
     await authenticate(false);
     const grab = async () => {
       try {
-        return await fetch(`${this.cfg.baseUrl}/api.php/v1/files/${fileId}`, {
+        return await fetch(url, {
           headers: { Token: this.token },
           redirect: 'error',
           signal: AbortSignal.timeout(this.cfg.timeoutMs),
@@ -306,11 +345,13 @@ class ZentaoClient {
   }
 
   taskUrl(id) {
+    id = objectId(id, '任务');
     if (this.cfg.urlMode === 'get') return `${this.cfg.baseUrl}/index.php?m=task&f=view&id=${id}`;
     return `${this.cfg.baseUrl}/task-view-${id}.html`;
   }
 
   bugUrl(id) {
+    id = objectId(id, '缺陷');
     if (this.cfg.urlMode === 'get') return `${this.cfg.baseUrl}/index.php?m=bug&f=view&id=${id}`;
     return `${this.cfg.baseUrl}/bug-view-${id}.html`;
   }
@@ -447,6 +488,7 @@ class ZentaoClient {
 
   /** 任务详情：含 children 子任务、operateMenu 当前可用操作 */
   async getTaskDetail(id) {
+    id = objectId(id, '任务');
     return this.getJSON(`/tasks/${id}`);
   }
 
@@ -528,11 +570,14 @@ class ZentaoClient {
   }
 
   async getBugDetail(id) {
+    id = objectId(id, '缺陷');
     return this.getJSON(`/bugs/${id}`);
   }
 
   /** 解决缺陷。resolution 必填，resolvedBuild 传版本 ID 或 trunk */
-  async resolveBug(id, { resolution = 'fixed', resolvedBuild = 'trunk', comment = '', assignedTo = '', duplicateBug = 0 } = {}) {
+  async resolveBug(id, payload = {}) {
+    id = objectId(id, '缺陷');
+    const { resolution, resolvedBuild, comment, assignedTo, duplicateBug } = validatedPayload('bug', 'resolve', payload);
     const body = { resolution: resolution || 'fixed', resolvedBuild: resolvedBuild || 'trunk' };
     if (comment) body.comment = comment;
     if (assignedTo) body.assignedTo = assignedTo;
@@ -542,39 +587,46 @@ class ZentaoClient {
 
   /** 关闭缺陷 */
   async closeBug(id, comment = '') {
-    return this.postJSON(`/bugs/${id}/close`, comment ? { comment } : {});
+    id = objectId(id, '缺陷');
+    const body = validatedPayload('bug', 'close', { comment });
+    return this.postJSON(`/bugs/${id}/close`, body);
   }
 
   /** 开始任务。禅道要求「总计消耗」和「预计剩余」不能同时为 0 */
-  async startTask(id, { consumed = 0, left = 0, realStarted } = {}) {
-    const c = Number(consumed) || 0;
-    const l = Number(left) || 0;
-    if (c === 0 && l === 0) throw new ZentaoError('消耗工时和剩余工时不能同时填 0', 0);
-    const task = await this.getTaskDetail(id);
-    const body = { assignedTo: this._accountOf(task), consumed: c, left: l, realStarted: realStarted || nowStr() };
+  async startTask(id, payload = {}, current) {
+    id = objectId(id, '任务');
+    const { consumed, left, realStarted, comment } = validatedPayload('task', 'start', payload);
+    const task = current || await this.getTaskDetail(id);
+    if (!task || Number(task.id) !== id) throw new ZentaoError('任务详情不可用', 0);
+    const previousConsumed = Number(task.consumed ?? 0);
+    if (!Number.isFinite(previousConsumed) || previousConsumed < 0 || consumed < previousConsumed) throw new ZentaoError('总计消耗不能少于服务器当前消耗，请刷新后填写', 0);
+    const body = { assignedTo: this._accountOf(task), consumed, left, realStarted: realStarted || nowStr() };
+    if (comment) body.comment = comment;
     return this.postJSON(`/tasks/${id}/start`, body);
   }
 
   /** 完成任务。realStarted 必填，finishedDate 不能早于它 */
-  async finishTask(id, { realStarted, finishedDate, currentConsumed = 0, left = 0, comment } = {}) {
-    const rs = realStarted || nowStr();
+  async finishTask(id, payload = {}, current) {
+    id = objectId(id, '任务');
+    const { realStarted, finishedDate, currentConsumed, comment } = validatedPayload('task', 'finish', payload);
+    const task = current || await this.getTaskDetail(id);
+    if (!task || Number(task.id) !== id) throw new ZentaoError('任务详情不可用', 0);
+    const rs = realStarted || (task.realStarted && !String(task.realStarted).startsWith('0000') ? task.realStarted : nowStr());
     const fd = finishedDate || nowStr();
     if (new Date(fd) < new Date(rs)) throw new ZentaoError('完成时间不能早于开始时间', 0);
-    const c = Number(currentConsumed) || 0;
     const body = {
       realStarted: rs,
       finishedDate: fd,
-      consumed: c,
-      currentConsumed: c, // 不同版本字段名不一致，两个都带上
-      left: Number(left) || 0,
+      currentConsumed,
     };
     if (comment) body.comment = comment;
     return this.postJSON(`/tasks/${id}/finish`, body);
   }
 
   /** 关闭任务 */
-  async closeTask(id, closedReason = 'done') {
-    return this.postJSON(`/tasks/${id}/close`, { closedReason });
+  async closeTask(id, comment = '') {
+    id = objectId(id, '任务');
+    return this.postJSON(`/tasks/${id}/close`, validatedPayload('task', 'close', { comment }));
   }
 
   /** 连通性 + 权限自检，给设置面板用 */

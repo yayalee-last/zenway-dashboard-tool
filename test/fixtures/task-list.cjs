@@ -41,12 +41,12 @@ ipcMain.handle('task:detail', (_event, id) => ({ ok: true, task: {
 ipcMain.handle('task:action', (_event, action) => {
   writes.push(action);
   assert.equal(action.action, 'close');
-  assert.deepEqual(action.payload, { closedReason: 'done' });
+  assert.deepEqual(action.payload, { comment: '' });
   const task = items.find(item => item.id === action.id);
   assert.equal(task.status, 'done');
   if (failNext) {
     failNext = false;
-    return { ok: false, error: '没有关闭任务的权限（测试）' };
+    return { ok: false, outcome: 'rejected', retrySafe: true, error: '没有关闭任务的权限（测试）' };
   }
   task.status = 'closed';
   win.webContents.send('state', state());
