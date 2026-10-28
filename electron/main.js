@@ -6,6 +6,7 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, screen } = 
 const { ZentaoClient, ZentaoError, normalizeBaseUrl } = require('./zentao');
 const { Updater } = require('./updater');
 const { createFloatingBall } = require('./floating-ball');
+const { accountOf, isMine, assigneeName, taskChildren, isParentTask } = require('./task-context');
 
 app.setName('zentao-widget');
 
@@ -741,12 +742,13 @@ function wireIpc() {
   ipcMain.handle('attachment:open', (_e, payload) => openAttachment(payload));
 
   ipcMain.handle('task:detail', async (_e, id) => {
+    if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, error: '任务 ID 无效' };
     try {
       const d = await client.getTaskDetail(id);
-      const me = String(config.account || '').toLowerCase();
-      const allKids = d.children || [];
-      // 只留指派给自己的子任务，别人的不显示（但记个数，给个提示）
-      const myKids = allKids.filter((c) => String(c.assignedTo || '').toLowerCase() === me);
+      if (!d || Number(d.id) !== id) throw new Error('任务详情不可用，请在禅道网页核对');
+      const kids = taskChildren(d);
+      const allKids = kids.children;
+      const mine = isMine(d, config.account);
       return {
         ok: true,
         task: {
@@ -764,20 +766,23 @@ function wireIpc() {
           finishedDate: d.finishedDate || null,
           openedDate: d.openedDate || null,
           openedBy: (d.openedBy && (d.openedBy.realname || d.openedBy.account)) || '',
-          assignedRealname: d.assignedToRealName || d.assignedTo || '',
+          assignedRealname: assigneeName(d),
+          isMine: mine,
+          readOnly: !mine,
           executionName: d.executionName || '',
           moduleTitle: d.moduleTitle || '',
           storyID: Number(d.storyID || d.story) || 0,
           storyTitle: d.storyTitle || '',
           parent: Number(d.parent) || 0,
-          isParent: Number(d.isParent) || 0,
+          isParent: isParentTask(d, kids) ? 1 : 0,
           parentName: d.parentName || '',
           parentUrl: Number(d.parent) > 0 ? client.taskUrl(Number(d.parent)) : null,
           url: client.taskUrl(Number(d.id)),
           operateMenu: d.operateMenu || [],
           selfAccount: config.account || '',
-          childrenTotal: allKids.length,
-          othersCount: allKids.length - myKids.length,
+          childrenState: kids.state,
+          childrenTotal: kids.state === 'supplied' ? allKids.length : null,
+          othersCount: allKids.filter(c => !isMine(c, config.account)).length,
           desc: await inlineDescImages(sanitizeHtml(d.desc, config.baseUrl)),
           files: detailFiles(d),
           history: (d.actions || [])
@@ -796,13 +801,15 @@ function wireIpc() {
                 .trim(),
               comment: sanitizeHtml(a.comment || '', config.baseUrl),
             })),
-          children: myKids.map((c) => ({
+          children: allKids.map((c) => ({
             id: Number(c.id),
             name: c.name || '',
             status: c.status || '',
             pri: Number(c.pri) || 0,
-            account: c.assignedTo || '',
-            realname: c.assignedToRealName || c.assignedTo || '',
+            account: accountOf(c),
+            realname: assigneeName(c),
+            isMine: isMine(c, config.account),
+            readOnly: !isMine(c, config.account),
             left: Number(c.left) || 0,
             url: client.taskUrl(c.id),
           })),
@@ -813,8 +820,21 @@ function wireIpc() {
     }
   });
 
-  ipcMain.handle('task:action', async (_e, { id, action, payload } = {}) => {
+  ipcMain.handle('task:action', async (event, request = {}) => {
+    if (!win || event?.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
+      return { ok: false, error: '任务操作来源无效' };
+    }
+    const { id, action, payload } = request || {};
+    if (!Number.isSafeInteger(id) || id <= 0 || !['start', 'finish', 'close'].includes(action)) {
+      return { ok: false, error: '任务操作请求无效' };
+    }
     try {
+      // 展示可见子任务不授予修改权。不要信任 renderer 的 isMine/readOnly，
+      // 每次写入前回查当前负责人；读取失败或身份不确定时不执行写操作。
+      const current = await client.getTaskDetail(id);
+      if (!current || Number(current.id) !== id || !isMine(current, config.account)) {
+        return { ok: false, error: '仅可操作当前明确指派给自己的任务；参考任务请在禅道网页处理' };
+      }
       if (action === 'start') await client.startTask(id, payload || {});
       else if (action === 'finish') await client.finishTask(id, payload || {});
       else if (action === 'close') await client.closeTask(id, payload && payload.closedReason);
