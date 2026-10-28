@@ -357,7 +357,7 @@ async function toggleTree(row, it, btn) {
     line.append(el('span', 'swho', childSummary(c)));
     line.addEventListener('click', (e) => {
       e.stopPropagation();
-      window.zt.open(c.url || taskUrl(c.id));
+      openDetail({ id: c.id });
     });
     box.append(line);
   }

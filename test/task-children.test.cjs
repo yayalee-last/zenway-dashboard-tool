@@ -183,24 +183,47 @@ test('actual renderer detail shows owner/status/hours of all kids and only confi
   }
 });
 
-test('expanded tree shows reference children and browser/parent navigation, repeats collapse/reopen safely', async () => {
-  const f = mainFixture([parent({ children: [child(11, 'doing', 'Me'), child(12, 'done', 'other')] })]);
+test('expanded tree opens child details inside widget and repeats collapse/reopen safely', async () => {
+  const reference = child(12, 'done', 'other', { parent: 10, children: [], desc: '<p>Reference child detail</p>' });
+  const f = mainFixture([parent({ children: [child(11, 'doing', 'Me'), reference] }), reference]);
   const ui = rendererFixture(id => f.invoke('task:detail', id));
   const item = { id: 11, name: 'Mine', status: 'doing', parent: 10 };
+  ui.S.items = [item];
   const row = ui.row(item), button = row.querySelectorAll('.expander')[0];
   await ui.toggleTree(row, item, button);
   assert.equal(row.nextElementSibling.className, 'subs');
   assert.match(row.nextElementSibling.textContent, /参考 · other · 已完成/);
   assert.doesNotMatch(row.nextElementSibling.textContent, /Child 11/);
   await row.nextElementSibling.children[0].click();
-  await row.nextElementSibling.children[1].click();
   assert.match(ui.opened[0], /id=10/);
-  assert.match(ui.opened[1], /task-view-12/);
   await ui.toggleTree(row, item, button);
   assert.equal(row.nextElementSibling, undefined);
   await ui.toggleTree(row, item, button);
   assert.equal(row.nextElementSibling.className, 'subs');
   assert.deepEqual(f.reads, [10, 10]);
+
+  await row.nextElementSibling.children[1].click();
+  await new Promise(setImmediate);
+  assert.equal(ui.DT.open, true);
+  assert.equal(ui.DT.kind, 'task');
+  assert.equal(ui.DT.id, 12);
+  assert.equal(ui.node('list').hidden, true);
+  assert.match(ui.node('dt-body').textContent, /Child 12/);
+  assert.match(ui.node('dt-body').textContent, /Reference child detail/);
+  assert.match(ui.node('dt-body').textContent, /参考 · 只读/);
+  assert.equal(ui.node('dt-foot').querySelectorAll('.primary').length, 0);
+  assert.equal(ui.opened.length, 1, 'child click must not open the browser');
+  assert.deepEqual(f.reads, [10, 10, 12]);
+  assert.deepEqual(f.writes, []);
+
+  ui.closeDetail();
+  assert.equal(ui.DT.open, false);
+  assert.equal(ui.node('detail').hidden, true);
+  assert.equal(ui.node('list').hidden, false);
+  assert.deepEqual(plain(ui.S.items.map(task => task.id)), [11]);
+  const returnedRow = ui.node('list').children[0];
+  await ui.toggleTree(returnedRow, item, returnedRow.querySelectorAll('.expander')[0]);
+  assert.match(returnedRow.nextElementSibling.textContent, /参考 · other · 已完成/);
 });
 
 test('tree distinguishes unknown/error/empty and resets disabled state for retry', async () => {
