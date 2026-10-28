@@ -19,7 +19,7 @@
 | `renderer/floating-*.html` / `floating-preview.js` | 悬浮球与预览界面 |
 | `electron/mock.js` | 有限范围的演示数据，不是全局网络/写入隔离 |
 | `scripts/pack.mjs` / `electron-dist.mjs` | Windows x64 包、Electron 运行时获取及缓存 |
-| `scripts/release.mjs` / `release-notify.mjs` / `ship.mjs` | 远端 Release 发布、可选企微通知、版本提交推送流程 |
+| `scripts/release.mjs` / `release-notes.mjs` / `release-notify.mjs` / `notify-release.mjs` / `ship.mjs` | 版本说明提取、正式发布、企微通知及手动补全说明与单次补发、版本提交推送流程 |
 | `scripts/make-icon.mjs` / `assets/` | 应用图标生成与图标资源 |
 | `probe.mjs` / `zentao.config.example.json` | 独立真实接口探测工具及模板，与应用配置分离 |
 | `test/` / `test/fixtures/` | Node 测试器、临时本地 HTTP 服务、Electron 界面和 Windows 更新 fixtures |
@@ -48,6 +48,7 @@
    该准备命令会解析/准备 Electron 运行时，并非完整安装替代。附件用例含真实 Electron UI，需 GUI；窗口和部分更新用例有 Windows 平台限制，Linux 跳过不算验证了 Windows 行为。
 5. 相关测试覆盖：附件权限/下载/本地打开与 preload，开始任务保留指派人和任务关闭/排序，更新检查调度与应用包校验/回滚，浮球/面板窗口生命周期与位置，以及模拟 Release/企微通知。用 fixtures 和临时目录扩展测试，禁止接入真实账号来跑写操作。
 6. 只检查发布逻辑时可独立运行 `node --test test/release-notify.test.mjs test/release-publish.test.mjs`；这些测试模拟 `fetch`，不实际创建 Release/发送企微通知。不得将该局部通过描述为全套或 Windows UI 通过。
+   `notify-release.yml` 手动补发流程也先执行上述两个模拟测试，再更新指定已有正式版的说明并发送一次消息；不得将补发脚本当作只读验证。
 7. UI/窗口变更应验证重复点击、取消/关闭、详情返回、刷新、设置开关、模式切换、托盘恢复和多屏边界；无法在 Windows GUI 验证时如实记录，不用静态检查代替。
 8. 代码行为变更更新 `CHANGELOG.md` 的「未发布」，用户命令/配置/功能边界变化同步 README；架构或验证约定变化同步本文件。只记录实际改动和可追溯历史，不编造版本、测试通过或兼容性。
 9. 交付说明分清已通过、失败、跳过和未运行项目，给出环境/原因。普通 PR 不自动运行当前发布 job，不可仅因没有失败检查就宣称 CI 全绿。

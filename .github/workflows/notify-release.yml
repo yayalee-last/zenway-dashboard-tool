@@ -1,0 +1,28 @@
+name: 补全发布说明并补发企微通知
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已公开的正式版本号，例如 v0.3.13
+        required: true
+        type: string
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 验证发布说明与通知脚本
+        run: node --test test/release-notify.test.mjs test/release-publish.test.mjs
+      - name: 补全已有版本说明并补发一次
+        run: node scripts/notify-release.mjs "$RELEASE_TAG"
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}

@@ -16,6 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import updateFormat from '../electron/update-format.js';
 import { notifyWecomRelease } from './release-notify.mjs';
+import { extractReleaseNotes } from './release-notes.mjs';
 const { APP_ARCHIVE, UPDATE_MANIFEST } = updateFormat;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -39,7 +40,9 @@ const artifacts = [
 
 const argv = process.argv.slice(2);
 const noteIdx = argv.indexOf('--note');
-const note = noteIdx >= 0 ? argv[noteIdx + 1] || '' : '';
+const note = noteIdx >= 0 ? (argv[noteIdx + 1] || '').trim()
+  : extractReleaseNotes(fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8'), pkg.version);
+if (!note) throw new Error('发布说明不能为空');
 const skipPack = argv.includes('--skip-pack');
 
 /* ---------- 1. 打包 ---------- */
@@ -109,7 +112,7 @@ try {
       tag_name: TAG,
       name: TAG,
       target_commitish: process.env.GITHUB_SHA || 'main',
-      body: note || `禅道挂件 ${TAG}`,
+      body: note,
       draft: true,
     }),
   });

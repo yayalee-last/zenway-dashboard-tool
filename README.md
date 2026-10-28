@@ -108,7 +108,7 @@ npm start
 | `npm run pack` | 构建 Windows x64 目录、完整 zip、应用小包和更新元数据；会清空旧 `release/` |
 | `npm run icon` | 重新生成 `assets/icon.png` / `assets/icon.ico` |
 | `npm run probe` | 读取根目录本地配置，访问真实禅道接口并写 `probe-result.json` |
-| `npm run release -- --note "说明"` | 默认先打包；有 `GITHUB_TOKEN` 时创建并公开 GitHub Release、上传三项产物 |
+| `npm run release` | 从 CHANGELOG 当前版本章节读取更新内容，默认先打包；有 `GITHUB_TOKEN` 时创建正式 Release、上传三项产物并通知 |
 | `npm run ship -- --note "说明"` | 默认升 patch 版本、`git add -A`、提交、推送，再打包发布；不是本地验证命令 |
 
 **发布命令会改变远端状态，不用于日常检查。** `ship --no-push` 只跳过 Git 推送，不禁止后续 Release 发布；没有令牌也仍可能提交、推送和打包。`ship --dry` 才只打印计划。不要在含其他未提交工作的目录里盲目执行。
@@ -129,6 +129,12 @@ release/
 更新器只有在版本、Electron、平台和架构等元数据匹配时才选择应用小包，否则回退完整包；Windows 更新助手有等待超时和失败回滚处理，但仍应先备份重要配置。程序目录必须可写，替换失败时查看用户数据下 `updates/` 内的日志。
 
 `.github/workflows/release.yml` 在 `main` 推送或手动运行时进入流程，其中仅手动触发或 `release:` 开头的提交执行发布 job；使用 Windows 和 Node.js 22，测试后打包、发布。普通 PR 没有配置自动验证流水线。`WECOM_WEBHOOK_URL` 是可选发布通知 Secret，只在确认正式 Release 已公开后发送通知；不要将令牌或 webhook 写进源码。
+
+发布说明默认读取 `CHANGELOG.md` 中与 `package.json` 版本一致的章节，保留小标题和更新条目；找不到或内容为空时停止发布。`--note "说明"` 可显式覆盖。使用 `ship` 升版本时，应先准备升后版本对应的 CHANGELOG 章节；CI 和本地发布使用同一提取逻辑。
+
+企微消息包含版本、该版本的更新内容及下载链接。长正文按 UTF-8 字节限制保留摘要并标注完整说明链接；不会为了长正文拆成多次通知。缺少正文时不会发送空摘要消息。
+
+需要补全已发布版本说明并补发通知时，在 Actions 手动运行「补全发布说明并补发企微通知」，填写例如 `v0.3.13`。该入口先从 CHANGELOG 更新已有正式 Release 的说明，再发送一次企微消息，不重新打包、创建版本或修改附件。它需要现有 `GITHUB_TOKEN` 和 `WECOM_WEBHOOK_URL`；失败后先核对实际状态，不盲目重跑。对应本地命令 `node scripts/notify-release.mjs v0.3.13` 也会修改远端说明并发消息，不能用作检查命令。
 
 ### 检查与测试
 

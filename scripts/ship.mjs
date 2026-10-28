@@ -140,7 +140,7 @@ if (ciMode) {
 log('');
 log('开始打包并发布 Release …');
 try {
-  execFileSync(process.execPath, [path.join(HERE, 'release.mjs'), '--note', note || `禅道挂件 v${version}`], {
+  execFileSync(process.execPath, [path.join(HERE, 'release.mjs'), ...(note ? ['--note', note] : [])], {
     cwd: ROOT,
     stdio: 'inherit',
     env: process.env,
