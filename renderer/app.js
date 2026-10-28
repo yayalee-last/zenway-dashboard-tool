@@ -399,7 +399,9 @@ function openTaskAction(action, it) {
   $('tm-ok').textContent = '确认';
   $('task-modal').hidden = false;
   if (closing) {
-    window.zt.resize(320);
+    // outerHeight 与原生窗口同为 DIP；页面缩放后的 innerHeight 会偏小。
+    // 保留较高的列表/详情尺寸，避免原点击位置落到窗口外触发悬浮收起。
+    window.zt.resize(Math.max(window.outerHeight, 320));
     $('tm-ok').focus();
     return;
   }

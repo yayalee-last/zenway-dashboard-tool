@@ -10,6 +10,25 @@ const { promisify } = require('node:util');
 
 const execFileAsync = promisify(execFile);
 
+test('close-task confirmation preserves the hover panel under its original pointer', {
+  skip: process.platform !== 'win32', timeout: 20000,
+}, async t => {
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), 'zentao-task-dialog-test-'));
+  t.after(() => fs.promises.rm(output, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+  const env = { ...process.env, ZT_WINDOW_TEST_DIR: output };
+  delete env.ELECTRON_RUN_AS_NODE;
+  try {
+    await execFileAsync(require('electron'), [path.join(__dirname, 'fixtures/task-action-dialog.cjs')], {
+      env, windowsHide: true, timeout: 15000,
+    });
+  } catch (error) {
+    const report = path.join(output, 'result.json');
+    if (fs.existsSync(report)) error.message += '\n' + fs.readFileSync(report, 'utf8');
+    throw error;
+  }
+  assert.equal(JSON.parse(fs.readFileSync(path.join(output, 'result.json'), 'utf8')).passed, true);
+});
+
 test('Windows floating ball expands on hover and preserves widget window state', {
   skip: process.platform !== 'win32', timeout: 100000,
 }, async t => {
