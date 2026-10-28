@@ -574,7 +574,8 @@ class ZentaoClient {
 
   /** 关闭任务 */
   async closeTask(id, closedReason = 'done') {
-    return this.postJSON(`/tasks/${id}/close`, { closedReason });
+    // 22.6 只转发 comment；缺失时 POST 数据为空，不会执行关闭。
+    return this.postJSON(`/tasks/${id}/close`, { closedReason, comment: '' });
   }
 
   /** 连通性 + 权限自检，给设置面板用 */

@@ -398,8 +398,11 @@ function openTaskAction(action, it) {
   $('tm-ok').disabled = false;
   $('tm-ok').textContent = '确认';
   $('task-modal').hidden = false;
+  window.zt.setTaskDialogOpen(true);
   if (closing) {
-    window.zt.resize(320);
+    // outerHeight 与原生窗口同为 DIP；页面缩放后的 innerHeight 会偏小。
+    // 保留较高的列表/详情尺寸，避免原点击位置落到窗口外触发悬浮收起。
+    window.zt.resize(Math.max(window.outerHeight, 320));
     $('tm-ok').focus();
     return;
   }
@@ -409,6 +412,7 @@ function openTaskAction(action, it) {
 
 function closeTaskAction() {
   $('task-modal').hidden = true;
+  window.zt.setTaskDialogOpen(false);
   pending = null;
   requestAnimationFrame(autoHeight);
 }
@@ -436,7 +440,7 @@ async function confirmTaskAction() {
   }
 
   closeTaskAction();
-  toast(action === 'close' ? '任务已关闭' : action === 'finish' ? '已完成' : '已开始', 'ok');
+  toast(action === 'close' ? '任务已关闭' : action === 'finish' || r.status === 'done' ? '已完成' : '已开始', 'ok');
   if (DT.open && DT.data && DT.data.id) loadDetail(DT.data.id);
 }
 

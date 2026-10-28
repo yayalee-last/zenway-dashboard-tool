@@ -10,6 +10,8 @@
 - 显示任务工时、父子任务、描述、最近动态，以及缺陷重现步骤、附件等详情；展开父任务/任务详情可看本次接口允许查看的子任务、负责人、状态和剩余工时，标明「我」或「参考」。
 - 开始、完成、关闭已完成任务；解决、关闭缺陷。**这些操作会修改真实禅道数据**，受服务端权限、状态和字段要求约束。
 - 「全部」分类可选择按等级或已完成优先排序，保存选择并同步悬浮球前三条待办预览。缺陷「已解决」仍算未关闭待办。
+- 开始、完成或关闭任务时显示操作弹窗；弹窗打开期间移出鼠标不会自动收起，提交失败继续保留。取消、关闭、Esc、点击遮罩或提交成功后恢复原页面与正常收起。关闭确认框保留较高的列表/详情窗口，只在空间不足时增高。
+- 禅道 22.6 中，开始任务时将剩余工时填为 0 会直接标为已完成；挂件按回查状态显示「已完成」，需要保持进行中时应填写实际剩余工时。
 - 托盘常驻、窗口置顶、位置记忆、开机自启设置、悬浮球和常驻面板切换。
 - 从 GitHub Releases 检查新版本，用户点击更新后下载、替换并重启 Windows 绿色版。
 
@@ -142,7 +144,7 @@ release/
 
 ```sh
 node -e "require('electron')"
-node --test test/attachments.test.cjs test/task-actions.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs test/release-publish.test.mjs
+node --test test/attachments.test.cjs test/task-actions.test.cjs test/task-action-dialog.test.cjs test/task-children.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs test/release-publish.test.mjs
 ```
 
 附件测试包含真实 Electron 界面测试，需要可运行的图形环境；窗口和部分 PowerShell 更新测试仅在 Windows 执行，其他平台会跳过。测试使用本地 HTTP fixtures、替身和临时目录，不需要真实禅道账号或真实发布令牌；跳过不等于对应平台行为已验证。
@@ -160,6 +162,8 @@ node --test test/task-children.test.cjs
 ```
 
 该用例执行真实主进程 IPC handler 和 renderer 函数，但不替代 Windows/Electron 图形环境中的布局与交互验收。
+
+关闭任务确认框的尺寸与取消/确认边界另有无账号回归：`node --test test/task-action-dialog.test.cjs`。`test/window.test.cjs` 包含使用真实 Electron 窗口、preload 和悬浮球的确认框回归；该原生窗口用例仅在 Windows 自动执行，不能以无图形环境的逻辑测试代替 Windows 验收。
 
 `npm run probe` 不是测试套件：它会访问真实服务器，输出地址、账号和任务数据；而且目前仅将 Token 认证 HTTP 200 视为成功，正常的 201 响应也可能误报，不能据此认定挂件登录失败。首次运行无配置时会从模板生成本地文件后退出，填写真实信息前请先确认授权。
 

@@ -42,6 +42,8 @@ function createFloatingBall(panel, savedPosition, onMove) {
   let collapseTimer = null;
   let moveTimer = null;
   let pointerTimer = null;
+  let disposed = false;
+  let taskDialogOpen = false;
   let ballReady = false;
   let preview = null;
   let previewReady = false;
@@ -156,6 +158,11 @@ function createFloatingBall(panel, savedPosition, onMove) {
     syncPreview();
   }
 
+  function setTaskDialogOpen(open) {
+    taskDialogOpen = open;
+    if (open) cancelCollapse();
+  }
+
   function setDisplayMode(mode) {
     if (displayMode === mode) return;
     displayMode = mode;
@@ -180,7 +187,7 @@ function createFloatingBall(panel, savedPosition, onMove) {
   }
 
   function trackPointer() {
-    if (displayMode !== 'ball') return;
+    if (displayMode !== 'ball' || taskDialogOpen) return;
     const point = screen.getCursorScreenPoint();
     const overBall = contains(ball.getBounds(), point);
     const overPanel = panel.isVisible() && contains(panel.getBounds(), point);
@@ -193,6 +200,21 @@ function createFloatingBall(panel, savedPosition, onMove) {
         panel.hide();
       }, COLLAPSE_DELAY);
     }
+  }
+
+  function destroy() {
+    if (disposed) return;
+    disposed = true;
+    clearInterval(pointerTimer);
+    clearTimeout(moveTimer);
+    cancelCollapse();
+    panel.removeListener('resize', positionPanel);
+    panel.removeListener('hide', resetHover);
+    panel.removeListener('show', hidePreview);
+    panel.removeListener('closed', destroy);
+    ball.removeListener('closed', destroy);
+    preview?.destroy();
+    if (!ball.isDestroyed()) ball.destroy();
   }
 
   pinBall();
@@ -215,6 +237,8 @@ function createFloatingBall(panel, savedPosition, onMove) {
   panel.on('resize', positionPanel);
   panel.on('hide', resetHover);
   panel.on('show', hidePreview);
+  panel.once('closed', destroy);
+  ball.once('closed', destroy);
   ball.loadFile(path.join(__dirname, '..', 'renderer', 'floating-ball.html'));
 
   return {
@@ -222,16 +246,8 @@ function createFloatingBall(panel, savedPosition, onMove) {
     showPanel,
     updatePreview,
     setDisplayMode,
-    destroy() {
-      clearInterval(pointerTimer);
-      clearTimeout(moveTimer);
-      cancelCollapse();
-      panel.removeListener('resize', positionPanel);
-      panel.removeListener('hide', resetHover);
-      panel.removeListener('show', hidePreview);
-      preview?.destroy();
-      ball.destroy();
-    },
+    setTaskDialogOpen,
+    destroy,
   };
 }
 

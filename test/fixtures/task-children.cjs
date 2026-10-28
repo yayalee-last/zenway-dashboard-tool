@@ -34,7 +34,7 @@ function mainFixture(details = []) {
   const event = { sender: webContents, senderFrame: frame };
   const electron = {
     app: { setName() {}, getPath: () => os.tmpdir(), requestSingleInstanceLock: () => false, quit() {} },
-    ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
+    ipcMain: { handle: (name, fn) => handlers.set(name, fn), on: (name, fn) => handlers.set(name, fn) },
     shell: { openExternal() { assert.fail('fixture must not open external programs'); } },
   };
   const source = path.resolve(__dirname, '../../electron/main.js'), realRequire = createRequire(source);
@@ -55,11 +55,13 @@ function mainFixture(details = []) {
   vm.runInContext(fs.readFileSync(source, 'utf8') + `
 module.exports = {
   setup(c, window) { config = { ...config, account: 'Me', baseUrl: 'https://zentao.invalid' }; client = c; win = window; wireIpc(); },
+  setFloatingBall(value) { floatingBall = value; },
   state() { return state; }
 };`, context, { filename: source });
   context.module.exports.setup(client, { webContents, isDestroyed: () => false });
   return { handlers, client, home, tasks, reads, writes, messages, event,
     state: context.module.exports.state,
+    setFloatingBall: context.module.exports.setFloatingBall,
     invoke: (channel, value, sender = event) => handlers.get(channel)(sender, value) };
 }
 
@@ -131,6 +133,7 @@ function rendererFixture(taskDetail) {
     document, console,
     window: { ItemOrder: require('../../renderer/item-order'), zt: {
       taskDetail, open: url => opened.push(url), resize: height => resized.push(height),
+      setTaskDialogOpen() {},
     } },
     requestAnimationFrame() {}, setTimeout() {}, clearTimeout() {},
   });

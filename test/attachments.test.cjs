@@ -47,7 +47,7 @@ async function fixture(t, { download, openPath, detailStatus = 200, title = '附
   const handlers = new Map();
   const electron = {
     app: { setName() {}, getPath: () => directory, requestSingleInstanceLock: () => false, quit() {} },
-    ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
+    ipcMain: { handle: (name, fn) => handlers.set(name, fn), on() {} },
     shell: { async openPath(file) { opened.push(file); return openPath ? openPath(file) : ''; },
       openExternal() { assert.fail('attachments must not use the browser'); } },
   };

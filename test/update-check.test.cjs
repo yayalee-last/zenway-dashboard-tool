@@ -38,7 +38,7 @@ function fixture(t, { packaged = true } = {}) {
     isPackaged: packaged, setName() {}, getPath: () => directory, getVersion: () => '0.3.4',
     requestSingleInstanceLock: () => false, quit() {},
   };
-  const electron = { app, ipcMain: { handle: (name, fn) => handlers.set(name, fn) } };
+  const electron = { app, ipcMain: { handle: (name, fn) => handlers.set(name, fn), on() {} } };
   const source = path.resolve(__dirname, '../electron/main.js');
   const realRequire = createRequire(source);
   const context = vm.createContext({
