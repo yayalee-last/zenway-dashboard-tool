@@ -7,6 +7,7 @@ const { ZentaoClient, ZentaoError, normalizeBaseUrl } = require('./zentao');
 const { Updater } = require('./updater');
 const { createFloatingBall } = require('./floating-ball');
 const { accountOf, isMine, assigneeName, taskChildren, isParentTask } = require('./task-context');
+const { actionPayload, applicableAction } = require('./action-policy');
 
 app.setName('zentao-widget');
 
@@ -41,6 +42,21 @@ let updateTimer = null;
 let refreshing = false;
 let state = { ok: false, items: [], at: 0, error: null, needSetup: true };
 let updater = null;
+const actionInFlight = new Set();
+const uncertainActions = new Map();
+let actionRevision = 0;
+let connectionRevision = 0;
+
+function markUncertain(key) { uncertainActions.set(key, ++actionRevision); }
+
+function actionKey(kind, id) {
+  return `${config.baseUrl}|${String(config.account).toLowerCase()}|${kind}|${id}`;
+}
+
+function mainSender(event) {
+  return Boolean(win && !win.isDestroyed() && event?.sender === win.webContents && event.senderFrame === win.webContents.mainFrame);
+}
+
 let update = {
   checking: false,
   downloading: false,
@@ -559,6 +575,7 @@ function pushState() {
 
 async function doRefresh(reason = 'timer') {
   if (refreshing) return state;
+  const revision = connectionRevision;
 
   // 调试：假数据
   if (process.argv.includes('--mock')) {
@@ -577,6 +594,7 @@ async function doRefresh(reason = 'timer') {
   try {
     // 任务和缺陷走两套接口，各拉各的；一边挂了另一边照常显示
     const [tRes, bRes] = await Promise.allSettled([client.fetchMyTasks(), client.fetchMyBugs()]);
+    if (revision !== connectionRevision) return state;
     const taskOk = tRes.status === 'fulfilled';
     const bugOk = bRes.status === 'fulfilled';
     if (!taskOk && !bugOk) throw tRes.reason;
@@ -601,6 +619,7 @@ async function doRefresh(reason = 'timer') {
       needSetup: false,
     };
   } catch (e) {
+    if (revision !== connectionRevision) return state;
     state = {
       ok: false,
       items: state.items || [],
@@ -612,6 +631,7 @@ async function doRefresh(reason = 'timer') {
     };
   } finally {
     refreshing = false;
+    if (revision !== connectionRevision) setTimeout(() => doRefresh('connection-changed'), 0);
   }
   pushState();
   return state;
@@ -686,6 +706,74 @@ async function openAttachment({ kind, id, fileId } = {}) {
   }
 }
 
+async function runAction(kind, event, request) {
+  const rejected = error => ({ ok: false, outcome: 'rejected', retrySafe: true, error, state });
+  if (!mainSender(event)) return rejected('操作来源无效');
+  if (!request || typeof request !== 'object' || Array.isArray(request)) return rejected('操作请求无效');
+  const { id, action } = request;
+  const actions = kind === 'task' ? ['start', 'finish', 'close'] : ['resolve', 'close'];
+  if (!Number.isSafeInteger(id) || id <= 0 || !actions.includes(action)) return rejected('操作请求无效');
+  let payload;
+  try { payload = actionPayload(kind, action, request.payload); } catch (error) { return rejected(error.message); }
+  if (kind === 'bug' && process.argv.includes('--mock')) {
+    const fakeFailure = process.argv.some(arg => arg.startsWith('--mock-bug-fail'));
+    if (fakeFailure) return rejected('「解决方案」不能为空（mock）');
+    // Keep the pre-existing demo path local. --mock is not a global isolation switch.
+    return { ok: true, outcome: 'verified', retrySafe: false, state, status: action === 'resolve' ? 'resolved' : 'closed' };
+  }
+  const key = actionKey(kind, id);
+  if (actionInFlight.has(key)) return { ok: false, outcome: 'pending', retrySafe: false, error: '这条记录的操作仍在处理中，请勿重复提交', state };
+  if (uncertainActions.has(key)) return { ok: false, outcome: 'unknown', retrySafe: false, error: '上次操作结果未确认；请先打开此记录的新详情或禅道网页核对，勿直接重试', state };
+  actionInFlight.add(key);
+  // Hold the identity/connection stable through preflight, dispatch and verification.
+  // config:save refuses connection changes until this operation settles.
+  const operationClient = client;
+  const account = config.account;
+  const read = () => kind === 'task' ? operationClient.getTaskDetail(id) : operationClient.getBugDetail(id);
+  let dispatched = false;
+  try {
+    const current = await read();
+    if (!current || Number(current.id) !== id) return rejected('当前详情不可用，请刷新或在禅道网页核对');
+    if (kind === 'task' && !isMine(current, account)) {
+      await doRefresh('action-rejected');
+      return rejected('仅可操作当前明确指派给自己的任务；参考任务请在禅道网页处理');
+    }
+    if (!applicableAction(kind, action, current)) {
+      await doRefresh('action-rejected');
+      return { ...rejected('服务器状态已变化或不可确认，当前不能执行此操作；已刷新列表，请查看最新详情，不会自动改成其他操作'), status: current.status || null };
+    }
+    dispatched = true;
+    if (kind === 'task') {
+      if (action === 'start') await operationClient.startTask(id, payload, current);
+      else if (action === 'finish') await operationClient.finishTask(id, payload, current);
+      else await operationClient.closeTask(id, payload.closedReason);
+    } else if (action === 'resolve') await operationClient.resolveBug(id, payload);
+    else await operationClient.closeBug(id, payload.comment);
+
+    await new Promise(resolve => setTimeout(resolve, 400));
+    let verified;
+    try { verified = await read(); } catch { /* An accepted write is not proof of its final state. */ }
+    const expected = { start: 'doing', finish: 'done', resolve: 'resolved', close: 'closed' }[action];
+    await doRefresh('action');
+    // 保留 22.6 开始时剩余为 0 直接完成的现有流程。
+    const completedOnStart = action === 'start' && payload.left === 0 && verified?.status === 'done';
+    if (!verified || Number(verified.id) !== id || (verified.status !== expected && !completedOnStart) || ![undefined, false, 0, '0'].includes(verified.deleted)) {
+      markUncertain(key);
+      return { ok: false, outcome: 'unknown', retrySafe: false,
+        error: '请求已提交，但未能确认目标状态；这不表示记录已删除。请先在禅道网页或最新详情核对，勿直接重试', state, status: verified?.status || null };
+    }
+    return { ok: true, outcome: 'verified', retrySafe: false, state, status: verified.status };
+  } catch (error) {
+    if (!dispatched || error.outcome === 'rejected') return rejected(error.message || '操作前检查失败，未提交写请求');
+    markUncertain(key);
+    await doRefresh('action-unknown');
+    return { ok: false, outcome: 'unknown', retrySafe: false,
+      error: `${error.message || '请求异常'}；操作结果未确认，请先在禅道网页核对，勿直接重试`, state };
+  } finally {
+    actionInFlight.delete(key);
+  }
+}
+
 
 function wireIpc() {
   ipcMain.handle('state:get', () => ({
@@ -718,10 +806,22 @@ function wireIpc() {
   });
 
   ipcMain.handle('config:save', async (_e, patch) => {
+    if (actionInFlight.size && patch && ['baseUrl', 'account', 'password', 'urlMode'].some(key => key in patch && patch[key] !== config[key])) {
+      return { ok: false, error: '操作仍在处理中，请等待结果后再修改禅道连接配置', state, config: publicConfig() };
+    }
     const autoUpdateWasEnabled = config.autoUpdate !== false;
     if (patch && typeof patch.baseUrl === 'string') patch.baseUrl = normalizeBaseUrl(patch.baseUrl);
+    const connectionChanged = patch && ['baseUrl', 'account', 'password', 'urlMode'].some(key => key in patch && patch[key] !== config[key]);
+    if (connectionChanged) connectionRevision++;
     saveConfig(patch);
-    client.applyConfig(config);
+    // Outstanding reads/authentication keep their old connection and token;
+    // they must never populate the new account's client after switching.
+    if (connectionChanged) client = new ZentaoClient(config);
+    else client.applyConfig(config);
+    if (connectionChanged) {
+      state = { ok: false, items: [], at: 0, error: null, needSetup: !client.configured };
+      pushState();
+    }
     if ('autoLaunch' in patch) app.setLoginItemSettings({ openAtLogin: Boolean(patch.autoLaunch), args: ['--background'] });
     syncWindowPin();
     floatingBall?.setDisplayMode(config.displayMode);
@@ -743,12 +843,16 @@ function wireIpc() {
 
   ipcMain.handle('task:detail', async (_e, id) => {
     if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, error: '任务 ID 无效' };
+    const key = actionKey('task', id), uncertainty = uncertainActions.get(key), revision = connectionRevision;
     try {
       const d = await client.getTaskDetail(id);
+      if (revision !== connectionRevision) throw new Error('连接配置已变化，请重新读取详情');
       if (!d || Number(d.id) !== id) throw new Error('任务详情不可用，请在禅道网页核对');
+      const writeStateKnown = ['wait', 'doing', 'pause', 'done', 'closed', 'cancel'].includes(d.status) && [undefined, false, 0, '0'].includes(d.deleted);
+      if (writeStateKnown && uncertainty !== undefined && uncertainty === uncertainActions.get(key) && !actionInFlight.has(key)) uncertainActions.delete(key);
       const kids = taskChildren(d);
       const allKids = kids.children;
-      const mine = isMine(d, config.account);
+      const mine = isMine(d, config.account) && writeStateKnown;
       return {
         ok: true,
         task: {
@@ -769,6 +873,7 @@ function wireIpc() {
           assignedRealname: assigneeName(d),
           isMine: mine,
           readOnly: !mine,
+          writeStateKnown,
           executionName: d.executionName || '',
           moduleTitle: d.moduleTitle || '',
           storyID: Number(d.storyID || d.story) || 0,
@@ -821,50 +926,12 @@ function wireIpc() {
   });
 
   ipcMain.handle('task:action', async (event, request = {}) => {
-    if (!win || event?.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
-      return { ok: false, error: '任务操作来源无效' };
-    }
-    const { id, action, payload } = request || {};
-    if (!Number.isSafeInteger(id) || id <= 0 || !['start', 'finish', 'close'].includes(action)) {
-      return { ok: false, error: '任务操作请求无效' };
-    }
-    try {
-      // 展示可见子任务不授予修改权。不要信任 renderer 的 isMine/readOnly，
-      // 每次写入前回查当前负责人；读取失败或身份不确定时不执行写操作。
-      const current = await client.getTaskDetail(id);
-      if (!current || Number(current.id) !== id || !isMine(current, config.account)) {
-        return { ok: false, error: '仅可操作当前明确指派给自己的任务；参考任务请在禅道网页处理' };
-      }
-      if (action === 'start') await client.startTask(id, payload || {});
-      else if (action === 'finish') await client.finishTask(id, payload || {});
-      else if (action === 'close') await client.closeTask(id, payload && payload.closedReason);
-      else throw new Error(`不支持的操作：${action}`);
-
-      // 禅道对不存在的任务也会回 200 null，必须回查状态才知道有没有真生效
-      await new Promise((r) => setTimeout(r, 400));
-      let actual = null;
-      try {
-        const d = await client.getTaskDetail(id);
-        actual = d.status || null;
-      } catch {
-        /* 查不到就跳过校验 */
-      }
-
-      await doRefresh('action');
-
-      const expect = { start: 'doing', finish: 'done', close: 'closed' }[action];
-      // 禅道 22.6 开始任务时，剩余工时为 0 可以直接完成。
-      const completedOnStart = action === 'start' && Number(payload?.left) === 0 && actual === 'done';
-      if (actual && expect && actual !== expect && !completedOnStart) {
-        return { ok: false, error: `没生效，任务状态还是「${actual}」`, state };
-      }
-      return { ok: true, state, status: actual };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) };
-    }
+    return runAction('task', event, request);
   });
 
   ipcMain.handle('bug:detail', async (_e, id) => {
+    if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, error: '缺陷 ID 无效' };
+    const key = actionKey('bug', id), uncertainty = uncertainActions.get(key), revision = connectionRevision;
     if (process.argv.includes('--mock')) {
       const { MOCK_BUG_DETAIL } = require('./mock');
       const n = Number(id) || MOCK_BUG_DETAIL.id;
@@ -884,6 +951,10 @@ function wireIpc() {
     }
     try {
       const d = await client.getBugDetail(id);
+      if (revision !== connectionRevision) throw new Error('连接配置已变化，请重新读取详情');
+      if (!d || Number(d.id) !== id) throw new Error('缺陷详情不可用，请在禅道网页核对');
+      const writeStateKnown = ['active', 'resolved', 'closed'].includes(d.status) && [undefined, false, 0, '0'].includes(d.deleted);
+      if (writeStateKnown && uncertainty !== undefined && uncertainty === uncertainActions.get(key) && !actionInFlight.has(key)) uncertainActions.delete(key);
       const name = (o) => (o && (o.realname || o.account)) || '';
       const files = detailFiles(d);
 
@@ -893,6 +964,7 @@ function wireIpc() {
           id: Number(d.id),
           title: d.title || '',
           status: d.status || '',
+          writeStateKnown,
           statusName: d.statusName || '',
           severity: Number(d.severity) || 0,
           pri: Number(d.pri) || 0,
@@ -940,40 +1012,8 @@ function wireIpc() {
     }
   });
 
-  ipcMain.handle('bug:action', async (_e, { id, action, payload } = {}) => {
-    if (process.argv.includes('--mock')) {
-      const fake = (process.argv.find((a) => a.startsWith('--mock-bug-fail')) || '').includes('fail');
-      if (fake) return { ok: false, error: '「解决方案」不能为空（mock）' };
-      return { ok: true, state, status: action === 'resolve' ? 'resolved' : 'closed' };
-    }
-    try {
-      if (action === 'resolve') await client.resolveBug(id, payload || {});
-      else if (action === 'close') await client.closeBug(id, payload && payload.comment);
-      else throw new Error(`不支持的操作：${action}`);
-
-      // 跟任务一样：禅道对不生效的写操作也可能回 200，必须回查状态
-      await new Promise((r) => setTimeout(r, 400));
-      let actual = null;
-      try {
-        actual = (await client.getBugDetail(id)).status || null;
-      } catch {
-        /* 查不到就跳过校验 */
-      }
-
-      await doRefresh('bug-action');
-
-      const expect = { resolve: 'resolved', close: 'closed' }[action];
-      if (actual && expect && actual !== expect) {
-        return {
-          ok: false,
-          error: `禅道没真改（状态还是「${actual}」），多半是解决方案/解决版本不对，换个版本号再试`,
-          state,
-        };
-      }
-      return { ok: true, state, status: actual };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) };
-    }
+  ipcMain.handle('bug:action', async (event, request = {}) => {
+    return runAction('bug', event, request);
   });
 
   ipcMain.on('win:task-dialog', (event, open) => {

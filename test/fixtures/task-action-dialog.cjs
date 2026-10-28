@@ -29,7 +29,7 @@ ipcMain.handle('win:resize', (_event, height) => {
 ipcMain.on('win:task-dialog', (_event, open) => floating.setTaskDialogOpen(open));
 ipcMain.handle('task:action', (_event, payload) => {
   writes.push(payload);
-  return { ok: false, error: 'Synthetic permission failure' };
+  return { ok: false, outcome: 'rejected', error: 'Synthetic permission failure' };
 });
 
 const js = source => panel.webContents.executeJavaScript(source);

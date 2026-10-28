@@ -8,12 +8,15 @@ const vm = require('node:vm');
 const { createRequire } = require('node:module');
 
 // Execute real handlers without starting Electron, creating config or reaching a server.
-function mainFixture(details = []) {
+function mainFixture(details = [], { argv = [], allowConfigSave = false } = {}) {
   const handlers = new Map(), reads = [], writes = [], messages = [];
+  const diskWrites = [], scheduledTimeouts = [], intervals = [], createdClients = [];
   const tasks = new Map(details.map(task => [Number(task.id), task]));
   const home = [];
   const client = {
     configured: true,
+    cfg: { baseUrl: 'https://zentao.invalid', account: 'Me', password: '' },
+    applyConfig(cfg) { this.cfg = { ...cfg }; this.configured = Boolean(this.cfg.baseUrl && this.cfg.account); },
     async getTaskDetail(id) {
       reads.push(id);
       const value = tasks.get(id);
@@ -32,8 +35,14 @@ function mainFixture(details = []) {
   }
   const frame = {}, webContents = { mainFrame: frame, send: (...args) => messages.push(args) };
   const event = { sender: webContents, senderFrame: frame };
+  const fixtureFs = {
+    ...fs,
+    existsSync: () => false,
+    mkdirSync: (...args) => { if (!allowConfigSave) assert.fail('filesystem writes not allowed'); diskWrites.push({ method: 'mkdirSync', args }); },
+    writeFileSync: (...args) => { if (!allowConfigSave) assert.fail('filesystem writes not allowed'); diskWrites.push({ method: 'writeFileSync', args }); },
+  };
   const electron = {
-    app: { setName() {}, getPath: () => os.tmpdir(), requestSingleInstanceLock: () => false, quit() {} },
+    app: { setName() {}, getPath: () => allowConfigSave ? path.join(os.tmpdir(), 'zentao-config-save-fixture-only') : os.tmpdir(), requestSingleInstanceLock: () => false, quit() {}, setLoginItemSettings() {} },
     ipcMain: { handle: (name, fn) => handlers.set(name, fn), on: (name, fn) => handlers.set(name, fn) },
     shell: { openExternal() { assert.fail('fixture must not open external programs'); } },
   };
@@ -41,27 +50,58 @@ function mainFixture(details = []) {
   const context = vm.createContext({
     require(name) {
       if (name === 'electron') return electron;
-      if (name === './zentao') return { ZentaoClient: class { constructor() { assert.fail('real client not allowed'); } }, ZentaoError: Error };
+      if (name === 'node:fs') return fixtureFs;
+      if (name === './zentao') return {
+        ZentaoClient: class { constructor(cfg) {
+          if (!allowConfigSave) assert.fail('real client not allowed');
+          const next = { ...client, cfg: { ...cfg }, token: null, tokenExpireAt: 0 };
+          next.applyConfig(cfg);
+          createdClients.push(next);
+          return next;
+        } },
+        ZentaoError: Error,
+        normalizeBaseUrl: value => String(value || '').trim().replace(/\/+$/, ''),
+      };
       if (name === './updater') return { Updater: class { constructor() { assert.fail('real updater not allowed'); } } };
       if (name === './floating-ball') return { createFloatingBall() { assert.fail('window creation not allowed'); } };
       if (/^(node:)?https?$/.test(name)) assert.fail('network not allowed');
       return realRequire(name);
     },
     module: { exports: {} }, __dirname: path.dirname(source), __filename: source,
-    process: { argv: [], platform: process.platform }, Buffer, console,
+    process: { argv, platform: process.platform }, Buffer, console,
     fetch() { assert.fail('network not allowed'); },
-    setTimeout(fn) { fn(); return 1; }, clearTimeout() {}, setInterval() { assert.fail('polling not allowed'); }, clearInterval() {},
+    setTimeout(fn, ms) {
+      if (!allowConfigSave) { fn(); return 1; }
+      if (ms === 400) { fn(); return scheduledTimeouts.length + 1; }
+      scheduledTimeouts.push({ fn, ms });
+      return scheduledTimeouts.length;
+    },
+    clearTimeout() {},
+    setInterval(fn, ms) {
+      if (!allowConfigSave) assert.fail('polling not allowed');
+      intervals.push({ fn, ms, cleared: false });
+      return intervals.length;
+    },
+    clearInterval(id) { if (allowConfigSave && intervals[id - 1]) intervals[id - 1].cleared = true; },
   });
   vm.runInContext(fs.readFileSync(source, 'utf8') + `
 module.exports = {
   setup(c, window) { config = { ...config, account: 'Me', baseUrl: 'https://zentao.invalid' }; client = c; win = window; wireIpc(); },
   setFloatingBall(value) { floatingBall = value; },
-  state() { return state; }
+  state() { return state; },
+  config() { return config; },
+  currentClient() { return client; }
 };`, context, { filename: source });
-  context.module.exports.setup(client, { webContents, isDestroyed: () => false });
-  return { handlers, client, home, tasks, reads, writes, messages, event,
-    state: context.module.exports.state,
+  context.module.exports.setup(client, { webContents, isDestroyed: () => false, setAlwaysOnTop() {} });
+  return { handlers, client, home, tasks, reads, writes, messages, event, diskWrites, intervals, scheduledTimeouts, createdClients,
     setFloatingBall: context.module.exports.setFloatingBall,
+    state: context.module.exports.state,
+    config: context.module.exports.config,
+    currentClient: context.module.exports.currentClient,
+    async runScheduledTimeouts() {
+      const pending = scheduledTimeouts.splice(0);
+      await Promise.all(pending.map(({ fn }) => fn()));
+    },
     invoke: (channel, value, sender = event) => handlers.get(channel)(sender, value) };
 }
 

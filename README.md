@@ -2,7 +2,7 @@
 
 用 Electron 将指派给自己的禅道任务、缺陷放到桌面。默认显示悬浮球，悬停展开待办面板，也可以切换为常驻完整面板。
 
-当前源码版本：`0.3.14`。本项目使用禅道 REST API v1；不是禅道网页的完整替代，也不是实时推送客户端。
+当前源码版本：`0.3.15`。本项目使用禅道 REST API v1；不是禅道网页的完整替代，也不是实时推送客户端。
 
 ## 能做什么
 
@@ -88,8 +88,8 @@ npm start
 - 单个执行/产品读取失败可能被跳过；任务、缺陷只有一侧成功时仍可展示另一侧。全部刷新失败时保留内存中的旧列表，应结合刷新时间和错误提示判断，重启后没有持久化离线列表。
 - 首页、分类数量和悬浮预览仍只使用个人待办列表；展开的其他负责人子任务仅作参考，不加入数量或排序。点击列表展开的子任务或详情中的子任务，均在挂件内打开详情；详情底部仍可打开禅道网页。他人或无法确认负责人的任务在挂件内只读，无开始/完成/关闭按钮；主进程在每次写入前重新读取并核对当前负责人，读取失败或不再指派给自己时拒绝写入，网页操作仍由禅道自身权限控制。
 - 子任务使用任务详情响应中的 `children`（数组或 ID 索引对象），不额外扫描全站或假设部署支持其他全局接口。未提供/null/无法识别的子任务数据会明确提示无法确认，不当作 0 条；只展示可识别条目时会提示数据不完整。明确空数组/空对象只表示本次接口返回 0 条，不保证不存在权限外或接口省略的数据。缺少父任务标记的列表条目也可按需点展开查询，不在刷新时为每条任务自动拉详情。
-- 禅道版本、插件和部署方式可能改变接口响应。主客户端接受 Token 创建返回 200 或 201，并在 401/登录 HTML 后重登一次，但这不代表兼容所有禅道版本或 SSO 登录方式。
-- 任务/缺陷操作后会回查状态；如果回查失败，代码会跳过该校验，返回成功不能单独作为服务端修改已确认的证据，必要时在禅道网页核对。
+- 禅道版本、插件和部署方式可能改变接口响应。主客户端接受 Token 创建返回 200 或 201；读取在 401/登录 HTML 后可重新认证一次，写操作不自动重发。带 Token 的请求禁止重定向，请配置最终部署地址；这不代表兼容所有禅道版本或 SSO。
+- 任务/缺陷操作后必须回查确认目标状态才提示成功；回查失败、超时或状态异常时显示结果未确认，并暂停重试。重新打开该记录的最新详情核对后可再次操作；挂件不会自动重发写请求。
 
 ## 安全与隐私
 
@@ -144,7 +144,7 @@ release/
 
 ```sh
 node -e "require('electron')"
-node --test test/attachments.test.cjs test/task-actions.test.cjs test/task-action-dialog.test.cjs test/task-children.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs test/release-publish.test.mjs
+node --test test/attachments.test.cjs test/task-actions.test.cjs test/task-action-dialog.test.cjs test/task-children.test.cjs test/zentao-safety.test.cjs test/action-safety-ipc.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs test/release-publish.test.mjs
 ```
 
 附件测试包含真实 Electron 界面测试，需要可运行的图形环境；窗口和部分 PowerShell 更新测试仅在 Windows 执行，其他平台会跳过。测试使用本地 HTTP fixtures、替身和临时目录，不需要真实禅道账号或真实发布令牌；跳过不等于对应平台行为已验证。

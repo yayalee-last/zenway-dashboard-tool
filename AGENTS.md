@@ -42,11 +42,11 @@
 
    ```sh
    node -e "require('electron')"
-   node --test test/attachments.test.cjs test/task-actions.test.cjs test/task-action-dialog.test.cjs test/task-children.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs test/release-publish.test.mjs
+   node --test test/attachments.test.cjs test/task-actions.test.cjs test/task-action-dialog.test.cjs test/task-children.test.cjs test/zentao-safety.test.cjs test/action-safety-ipc.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs test/release-publish.test.mjs
    ```
 
    该准备命令会解析/准备 Electron 运行时，并非完整安装替代。附件用例含真实 Electron UI，需 GUI；窗口和部分更新用例有 Windows 平台限制，Linux 跳过不算验证了 Windows 行为。
-5. 相关测试覆盖：附件权限/下载/本地打开与 preload，开始任务保留指派人和任务关闭/排序，更新检查调度与应用包校验/回滚，浮球/面板窗口生命周期与位置，以及模拟 Release/企微通知。用 fixtures 和临时目录扩展测试，禁止接入真实账号来跑写操作。
+5. 相关测试覆盖：附件权限/下载/本地打开与 preload，开始任务保留指派人和任务关闭/排序、操作防重/状态确认/连接切换及 REST 请求边界，更新检查调度与应用包校验/回滚，浮球/面板窗口生命周期与位置，以及模拟 Release/企微通知。用 fixtures 和临时目录扩展测试，禁止接入真实账号来跑写操作。
 6. 只检查发布逻辑时可独立运行 `node --test test/release-notify.test.mjs test/release-publish.test.mjs`；这些测试模拟 `fetch`，不实际创建 Release/发送企微通知。不得将该局部通过描述为全套或 Windows UI 通过。
    `notify-release.yml` 手动补发流程也先执行上述两个模拟测试，再更新指定已有正式版的说明并发送一次消息；不得将补发脚本当作只读验证。
 7. UI/窗口变更应验证重复点击、取消/关闭、详情返回、刷新、设置开关、模式切换、托盘恢复和多屏边界；无法在 Windows GUI 验证时如实记录，不用静态检查代替。

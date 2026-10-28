@@ -113,7 +113,7 @@ for (const ownership of ['other', '', null, { realname: 'Unknown' }, { account: 
   test('task action rejects reference/uncertain ownership even with forged frontend flags: ' + JSON.stringify(ownership), async () => {
     const f = mainFixture([parent({ assignedTo: ownership })]);
     for (const action of ['start', 'finish', 'close']) {
-      const result = await f.invoke('task:action', { id: 10, action, isMine: true, readOnly: false });
+      const result = await f.invoke('task:action', { id: 10, action, isMine: true, readOnly: false, payload: action === 'start' ? { consumed: 1, left: 2 } : action === 'finish' ? { currentConsumed: 1, left: 0 } : { closedReason: 'done' } });
       assert.equal(result.ok, false);
       assert.match(result.error, /明确指派给自己/);
     }
@@ -122,9 +122,9 @@ for (const ownership of ['other', '', null, { realname: 'Unknown' }, { account: 
 }
 
 test('current self owner retains start/finish/close and normal refresh', async () => {
-  const f = mainFixture([parent({ assignedTo: { account: 'mE' } })]);
+  const f = mainFixture([parent({ assignedTo: { account: 'mE' }, status: 'wait' })]);
   for (const action of ['start', 'finish', 'close']) {
-    const result = await f.invoke('task:action', { id: 10, action, payload: { consumed: 1, left: 2, closedReason: 'done' } });
+    const result = await f.invoke('task:action', { id: 10, action, payload: action === 'start' ? { consumed: 1, left: 2 } : action === 'finish' ? { currentConsumed: 1, left: 0 } : { closedReason: 'done' } });
     assert.equal(result.ok, true, result.error);
   }
   assert.deepEqual(f.writes.map(write => write.method), ['startTask', 'finishTask', 'closeTask']);
@@ -394,6 +394,7 @@ test('start retains status checks for positive remaining hours and unrelated fin
     f.client.startTask = async id => { f.tasks.get(id).status = actual; };
     const result = await f.invoke('task:action', { id: 10, action: 'start', payload: { consumed: 0.5, left } });
     assert.equal(result.ok, false);
-    assert.match(result.error, /没生效/);
+    assert.equal(result.outcome, 'unknown');
+    assert.match(result.error, /未能确认目标状态/);
   }
 });

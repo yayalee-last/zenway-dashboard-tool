@@ -46,7 +46,7 @@ ipcMain.handle('task:action', (_event, action) => {
   assert.equal(task.status, 'done');
   if (failNext) {
     failNext = false;
-    return { ok: false, error: '没有关闭任务的权限（测试）' };
+    return { ok: false, outcome: 'rejected', error: '没有关闭任务的权限（测试）' };
   }
   task.status = 'closed';
   win.webContents.send('state', state());
