@@ -11,15 +11,16 @@ const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
 
 test('Windows floating ball expands on hover and preserves widget window state', {
-  skip: process.platform !== 'win32', timeout: 60000,
+  skip: process.platform !== 'win32', timeout: 100000,
 }, async t => {
   const output = fs.mkdtempSync(path.join(os.tmpdir(), 'zentao-window-test-'));
   t.after(() => fs.promises.rm(output, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
   const env = { ...process.env, ZT_WINDOW_TEST_DIR: output };
   delete env.ELECTRON_RUN_AS_NODE;
   try {
+    // 包含 31 秒定时刷新等待，以及多轮原生窗口创建和截图。
     await execFileAsync(require('electron'), [path.join(__dirname, 'fixtures/window-lifecycle.cjs')], {
-      env, windowsHide: true, timeout: 50000,
+      env, windowsHide: true, timeout: 90000,
     });
   } catch (error) {
     const report = path.join(output, 'result.json');
