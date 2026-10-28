@@ -12,6 +12,7 @@ function rendererHarness({ innerHeight = 675, outerHeight = innerHeight, zoom = 
   const elements = new Map();
   const resizeCalls = [];
   const writes = [];
+  const dialogStates = [];
   const listeners = new Map();
   const makeElement = (id) => ({
     id, hidden: true, value: '', textContent: '', disabled: false,
@@ -42,6 +43,7 @@ function rendererHarness({ innerHeight = 675, outerHeight = innerHeight, zoom = 
         window.outerHeight = height;
         window.innerHeight = height / zoom;
       },
+      setTaskDialogOpen(open) { dialogStates.push(open); },
       taskAction(payload) { writes.push(payload); return Promise.resolve({ ok: true }); },
       onState() {}, onOpenSettings() {}, onOpenItem() {}, onUpdate() {}, onOpenUpdate() {},
     },
@@ -58,7 +60,7 @@ function rendererHarness({ innerHeight = 675, outerHeight = innerHeight, zoom = 
   vm.runInContext(source, context, { filename: 'renderer/app.js' });
   vm.runInContext(`DT.open = ${Boolean(detailOpen)}`, context);
   context.bind();
-  return { context, get, listeners, resizeCalls, writes, window };
+  return { context, get, listeners, resizeCalls, writes, window, dialogStates };
 }
 
 test('opening a close confirmation preserves a tall list instead of shrinking it below the pointer', () => {
@@ -85,6 +87,7 @@ test('opening at 125% zoom preserves native window height, not scaled innerHeigh
 test('cancel button, Escape, and backdrop dismiss without writing and restore list height', () => {
   for (const dismiss of [
     h => h.get('tm-cancel').listeners.click(),
+    h => h.get('tm-close').listeners.click(),
     h => h.listeners.get('keydown')({ key: 'Escape' }),
     h => h.get('task-modal').listeners.click({ target: h.get('task-modal') }),
   ]) {
@@ -94,6 +97,7 @@ test('cancel button, Escape, and backdrop dismiss without writing and restore li
     assert.equal(h.get('task-modal').hidden, true);
     assert.equal(h.writes.length, 0);
     assert.equal(h.resizeCalls.at(-1), 675);
+    assert.deepEqual(h.dialogStates, [true, false]);
   }
 });
 
@@ -115,4 +119,41 @@ test('confirmation is the only task write and dismissal restores detail height',
   assert.deepEqual(detail.resizeCalls, [600], 'opening from details must retain the current detail height');
   detail.get('tm-cancel').listeners.click();
   assert.equal(detail.resizeCalls.at(-1), 600);
+});
+
+test('start, finish, and close hold the panel until the task dialog is dismissed', () => {
+  for (const action of ['start', 'finish', 'close']) {
+    const h = rendererHarness();
+    h.context.openTaskAction(action, { id: 7, name: 'Synthetic task', left: 2 });
+    assert.deepEqual(h.dialogStates, [true]);
+    h.context.closeTaskAction();
+    assert.deepEqual(h.dialogStates, [true, false]);
+    assert.equal(h.writes.length, 0);
+  }
+});
+
+test('failed submissions keep the dialog held and success releases it', async () => {
+  const h = rendererHarness();
+  h.window.zt.taskAction = async () => ({ ok: false, error: 'Synthetic failure' });
+  h.context.openTaskAction('finish', { id: 7, name: 'Synthetic task', left: 2 });
+  await h.context.confirmTaskAction();
+  assert.equal(h.get('task-modal').hidden, false);
+  assert.equal(h.get('tm-err').textContent, 'Synthetic failure');
+  assert.deepEqual(h.dialogStates, [true]);
+  h.window.zt.taskAction = async () => ({ ok: true, status: 'done' });
+  await h.context.confirmTaskAction();
+  assert.equal(h.get('task-modal').hidden, true);
+  assert.deepEqual(h.dialogStates, [true, false]);
+});
+
+test('start feedback reflects the verified final status', async () => {
+  for (const [status, message] of [['done', '已完成'], ['doing', '已开始']]) {
+    const h = rendererHarness();
+    h.window.zt.taskAction = async () => ({ ok: true, status });
+    h.context.openTaskAction('start', { id: 7, name: 'Synthetic task', left: 0 });
+    await h.context.confirmTaskAction();
+    assert(h.get('toast').textContent.includes(message));
+    assert.equal(h.get('task-modal').hidden, true);
+    assert.deepEqual(h.dialogStates, [true, false]);
+  }
 });

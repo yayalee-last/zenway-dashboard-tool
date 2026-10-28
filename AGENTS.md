@@ -42,7 +42,7 @@
 
    ```sh
    node -e "require('electron')"
-   node --test test/attachments.test.cjs test/task-actions.test.cjs test/task-action-dialog.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs test/release-publish.test.mjs
+   node --test test/attachments.test.cjs test/task-actions.test.cjs test/task-action-dialog.test.cjs test/task-children.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs test/release-publish.test.mjs
    ```
 
    该准备命令会解析/准备 Electron 运行时，并非完整安装替代。附件用例含真实 Electron UI，需 GUI；窗口和部分更新用例有 Windows 平台限制，Linux 跳过不算验证了 Windows 行为。

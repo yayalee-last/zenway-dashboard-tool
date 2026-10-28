@@ -360,3 +360,40 @@ test('existing Windows list fixture supplies explicit self ownership for its edi
   await button.click();
   assert.equal(ui.pending().it.id, 2);
 });
+
+test('task dialog hold accepts booleans only from the main panel frame', () => {
+  const f = mainFixture();
+  const holds = [];
+  f.setFloatingBall({ setTaskDialogOpen: open => holds.push(open) });
+  f.invoke('win:task-dialog', true);
+  f.invoke('win:task-dialog', false);
+  for (const value of [null, 1, 'true', {}]) f.invoke('win:task-dialog', value);
+  f.invoke('win:task-dialog', true, { sender: {}, senderFrame: f.event.senderFrame });
+  f.invoke('win:task-dialog', true, { sender: f.event.sender, senderFrame: {} });
+  assert.deepEqual(holds, [true, false]);
+  assert.equal(f.reads.length, 0);
+  assert.equal(f.writes.length, 0);
+});
+
+test('start with zero remaining hours accepts ZenTao completion without a second write', async () => {
+  const f = mainFixture([parent({ status: 'wait' })]);
+  f.client.startTask = async (id, payload) => {
+    f.writes.push({ id, payload });
+    f.tasks.get(id).status = 'done';
+  };
+  const result = await f.invoke('task:action', { id: 10, action: 'start', payload: { consumed: 0.5, left: 0 } });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.status, 'done');
+  assert.equal(f.writes.length, 1);
+  assert.deepEqual(f.writes[0].payload, { consumed: 0.5, left: 0 });
+});
+
+test('start retains status checks for positive remaining hours and unrelated final statuses', async () => {
+  for (const [left, actual] of [[2, 'done'], [0, 'closed'], [0, 'cancel']]) {
+    const f = mainFixture([parent({ status: 'wait' })]);
+    f.client.startTask = async id => { f.tasks.get(id).status = actual; };
+    const result = await f.invoke('task:action', { id: 10, action: 'start', payload: { consumed: 0.5, left } });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /没生效/);
+  }
+});

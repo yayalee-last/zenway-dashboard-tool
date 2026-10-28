@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('zt', {
   bugAction: (payload) => ipcRenderer.invoke('bug:action', payload),
   minimize: () => ipcRenderer.invoke('win:minimize'),
   resize: (h) => ipcRenderer.invoke('win:resize', h),
+  setTaskDialogOpen: (open) => ipcRenderer.send('win:task-dialog', open),
   quit: () => ipcRenderer.invoke('win:close'),
   togglePin: () => ipcRenderer.invoke('win:toggle-pin'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),

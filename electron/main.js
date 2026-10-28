@@ -853,7 +853,9 @@ function wireIpc() {
       await doRefresh('action');
 
       const expect = { start: 'doing', finish: 'done', close: 'closed' }[action];
-      if (actual && expect && actual !== expect) {
+      // 禅道 22.6 开始任务时，剩余工时为 0 可以直接完成。
+      const completedOnStart = action === 'start' && Number(payload?.left) === 0 && actual === 'done';
+      if (actual && expect && actual !== expect && !completedOnStart) {
         return { ok: false, error: `没生效，任务状态还是「${actual}」`, state };
       }
       return { ok: true, state, status: actual };
@@ -974,6 +976,10 @@ function wireIpc() {
     }
   });
 
+  ipcMain.on('win:task-dialog', (event, open) => {
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || typeof open !== 'boolean') return;
+    floatingBall?.setTaskDialogOpen(open);
+  });
   ipcMain.handle('win:minimize', () => win?.hide());
   ipcMain.handle('win:resize', (_e, h) => {
     if (!win || !Number.isFinite(h)) return;

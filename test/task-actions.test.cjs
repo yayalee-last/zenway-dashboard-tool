@@ -8,22 +8,30 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { ZentaoClient } = require('../electron/zentao');
 
-async function fixture(t, { assignedTo = 'fixture-user', detailStatus = 200 } = {}) {
-  const task = { id: 35, name: 'Task', status: 'wait', assignedTo, execution: 8, left: 2 };
+async function fixture(t, { assignedTo = 'fixture-user', detailStatus = 200, action = 'start' } = {}) {
+  const task = { id: 35, name: 'Task', status: action === 'close' ? 'done' : 'wait', assignedTo, execution: 8, left: 2 };
   const writes = [], reads = [];
   const json = (res, status, body) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
   const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api.php/v1/tokens') return json(res, 201, { token: 'fixture-token' });
     if (req.method === 'POST') {
-      assert.equal(req.url, '/api.php/v1/tasks/35/start');
+      assert.equal(req.url, '/api.php/v1/tasks/35/' + action);
       let data = '';
       for await (const chunk of req) data += chunk;
       const body = JSON.parse(data);
       writes.push(body);
-      // Reproduce the observed start action: omitted assignedTo clears the assignment.
-      task.assignedTo = body.assignedTo || '';
-      task.status = 'doing';
-      Object.assign(task, { consumed: body.consumed, left: body.left, realStarted: body.realStarted });
+      if (action === 'close') {
+        // ZenTao 22.6 forwards comment only; absent/null leaves $_POST empty and skips close.
+        if (Object.hasOwn(body, 'comment') && body.comment !== null) {
+          task.status = 'closed';
+          task.closedReason = 'done';
+        }
+      } else {
+        // Reproduce the observed start action: omitted assignedTo clears the assignment.
+        task.assignedTo = body.assignedTo || '';
+        task.status = 'doing';
+        Object.assign(task, { consumed: body.consumed, left: body.left, realStarted: body.realStarted });
+      }
       return json(res, 200, task);
     }
     reads.push(req.url);
@@ -110,4 +118,12 @@ test('completed sorting brings tasks awaiting closure and resolved bugs first wi
     { id: 5, pri: 2, status: 'cancel' },
   ];
   assert.deepEqual(items.sort((a, b) => compareItems(a, b, 'completed')).map(item => item.id), [2, 3, 1, 4, 5]);
+});
+
+test('closing a completed task sends an explicit comment and actually closes it in ZenTao 22.6', async t => {
+  const f = await fixture(t, { action: 'close' });
+  const result = await f.client.closeTask(35);
+  assert.equal(result.status, 'closed', 'HTTP 200 alone must not count as closing the task');
+  assert.equal((await f.client.getTaskDetail(35)).status, 'closed');
+  assert.deepEqual(f.writes, [{ closedReason: 'done', comment: '' }]);
 });

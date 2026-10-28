@@ -26,6 +26,7 @@ ipcMain.handle('win:resize', (_event, height) => {
   const target = Math.max(200, Math.min(area.height - 80, Math.round(height)));
   if (Math.abs(target - panel.getSize()[1]) >= 4) panel.setBounds({ height: target });
 });
+ipcMain.on('win:task-dialog', (_event, open) => floating.setTaskDialogOpen(open));
 ipcMain.handle('task:action', (_event, payload) => {
   writes.push(payload);
   return { ok: false, error: 'Synthetic permission failure' };
@@ -54,6 +55,8 @@ app.whenReady().then(async () => {
   screen.getCursorScreenPoint = () => cursor;
   try {
     panel = new BrowserWindow({ width: 380, height: 520, show: false, frame: false,
+      // Match the production panel so Windows outerHeight excludes resize borders.
+      transparent: true, resizable: false,
       webPreferences: { preload: path.join(root, 'electron/preload.js'), contextIsolation: true, nodeIntegration: false } });
     await panel.loadFile(path.join(root, 'renderer/index.html'));
     await until(() => js('S.items.length === 10'), 'synthetic state');
@@ -68,6 +71,7 @@ app.whenReady().then(async () => {
     await pause(200);
 
     const before = panel.getBounds();
+    assert.equal(await js('outerHeight'), before.height, 'fixture renderer and native window must use the same height');
     const target = await js(`(() => {
       const buttons = Array.from(document.querySelectorAll('.act.close'));
       const index = buttons.findIndex(button => {
@@ -90,21 +94,23 @@ app.whenReady().then(async () => {
     assert.equal(await js("document.getElementById('task-modal').hidden"), false);
     assert.equal(writes.length, 0, 'opening the dialog must not write');
 
-    // Background updates cannot resize the modal; deliberate pointer departures still collapse normally.
+    // Background updates and pointer departures cannot dismiss an open task dialog.
     panel.webContents.send('state', state);
     panel.webContents.send('update', { hasUpdate: false });
     await pause(100);
     assert.equal(panel.getSize()[1], before.height);
     cursor = { x: -10000, y: -10000 };
-    await until(() => !panel.isVisible(), 'normal mouse-leave collapse');
-    cursor = { x: ballBounds.x + 32, y: ballBounds.y + 32 };
-    await until(() => panel.isVisible(), 'restore confirmation');
+    await pause(500);
+    assert.equal(panel.isVisible(), true, 'mouse leave must keep an open task confirmation visible');
     assert.equal(await js("document.getElementById('task-modal').hidden"), false);
-    enterPanel();
     await js("document.getElementById('tm-cancel').click()");
     await pause(100);
     assert.equal(panel.getSize()[1], before.height, 'cancel must restore normal list sizing');
     assert.equal(writes.length, 0);
+    await until(() => !panel.isVisible(), 'mouse-leave collapse after cancellation');
+    cursor = { x: ballBounds.x + 32, y: ballBounds.y + 32 };
+    await until(() => panel.isVisible(), 'reopen after cancellation');
+    enterPanel();
 
     // Page zoom changes CSS viewport pixels, not the native resize handler's DIP units.
     panel.webContents.setZoomFactor(1.25);
@@ -135,16 +141,26 @@ app.whenReady().then(async () => {
     assert.deepEqual(writes[0], { id: 1, action: 'close', payload: { closedReason: 'done' } });
     assert.equal(await js("document.getElementById('tm-err').textContent"), 'Synthetic permission failure');
     assert.equal(await js("document.getElementById('task-modal').hidden"), false);
+    cursor = { x: -10000, y: -10000 };
+    await pause(500);
+    assert.equal(panel.isVisible(), true, 'a failed submission must keep the task dialog visible');
     await js("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
     await pause(100);
     assert.equal(await js("document.getElementById('task-modal').hidden"), true);
     assert(panel.getSize()[1] < 320, 'Escape must restore compact list sizing');
+    await until(() => !panel.isVisible(), 'mouse-leave collapse after Escape');
     assert.deepEqual(requests, [], 'fixture must not attempt real network requests');
+
+    // Native shutdown may close the ball before application-level cleanup runs.
+    floating.window.destroy();
+    await pause(350);
+    assert.equal(panel.isDestroyed(), false, 'closing the ball must not destroy the main panel');
+    floating.destroy();
     report({ passed: true });
   } catch (error) {
     report({ passed: false, error: error.stack,
       panel: panel && { bounds: panel.getBounds(), visible: panel.isVisible() },
-      ball: floating && { bounds: floating.window.getBounds(), visible: floating.window.isVisible() },
+      ball: floating && !floating.window.isDestroyed() && { bounds: floating.window.getBounds(), visible: floating.window.isVisible() },
       cursor, point: screen.getCursorScreenPoint(), display: screen.getPrimaryDisplay().workArea });
     process.exitCode = 1;
   } finally {

@@ -10,7 +10,8 @@
 - 显示任务工时、父子任务、描述、最近动态，以及缺陷重现步骤、附件等详情；展开父任务/任务详情可看本次接口允许查看的子任务、负责人、状态和剩余工时，标明「我」或「参考」。
 - 开始、完成、关闭已完成任务；解决、关闭缺陷。**这些操作会修改真实禅道数据**，受服务端权限、状态和字段要求约束。
 - 「全部」分类可选择按等级或已完成优先排序，保存选择并同步悬浮球前三条待办预览。缺陷「已解决」仍算未关闭待办。
-- 关闭已完成任务前会显示确认框；打开时保留较高的列表/详情窗口，只在空间不足时增高，避免窗口缩到原点击位置上方而意外收起。取消、Esc 或点击遮罩可返回原页面；移出悬浮区域仍按原规则收起。
+- 开始、完成或关闭任务时显示操作弹窗；弹窗打开期间移出鼠标不会自动收起，提交失败继续保留。取消、关闭、Esc、点击遮罩或提交成功后恢复原页面与正常收起。关闭确认框保留较高的列表/详情窗口，只在空间不足时增高。
+- 禅道 22.6 中，开始任务时将剩余工时填为 0 会直接标为已完成；挂件按回查状态显示「已完成」，需要保持进行中时应填写实际剩余工时。
 - 托盘常驻、窗口置顶、位置记忆、开机自启设置、悬浮球和常驻面板切换。
 - 从 GitHub Releases 检查新版本，用户点击更新后下载、替换并重启 Windows 绿色版。
 
@@ -143,7 +144,7 @@ release/
 
 ```sh
 node -e "require('electron')"
-node --test test/attachments.test.cjs test/task-actions.test.cjs test/task-action-dialog.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs test/release-publish.test.mjs
+node --test test/attachments.test.cjs test/task-actions.test.cjs test/task-action-dialog.test.cjs test/task-children.test.cjs test/updater.test.cjs test/update-check.test.cjs test/window.test.cjs test/release-notify.test.mjs test/release-publish.test.mjs
 ```
 
 附件测试包含真实 Electron 界面测试，需要可运行的图形环境；窗口和部分 PowerShell 更新测试仅在 Windows 执行，其他平台会跳过。测试使用本地 HTTP fixtures、替身和临时目录，不需要真实禅道账号或真实发布令牌；跳过不等于对应平台行为已验证。
