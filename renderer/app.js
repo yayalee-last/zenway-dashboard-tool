@@ -961,17 +961,23 @@ function renderUpdate() {
 
   const text = $('ub-text');
   const go = $('ub-go');
+  const cancel = $('ub-cancel');
+  cancel.hidden = !up.canCancel;
+  cancel.disabled = !up.canCancel;
+  $('ub-close').hidden = Boolean(up.downloading);
+  text.title = up.error || up.notes || '';
 
   if (up.downloading) {
-    text.textContent = up.percent != null ? `正在下载更新 ${up.percent}%` : '正在下载更新…';
+    text.textContent = up.canCancel
+      ? (up.percent != null ? `正在下载更新 ${up.percent}%` : '正在下载更新…')
+      : '正在准备更新…';
     go.hidden = true;
     go.disabled = true;
   } else if (show) {
-    text.textContent = `新版本 ${up.latest}（当前 v${up.current || '—'}）`;
-    text.title = up.notes || '';
+    text.textContent = up.error ? '更新失败，可重试' : `新版本 ${up.latest}（当前 v${up.current || '—'}）`;
     go.hidden = false;
     go.disabled = false;
-    go.textContent = '更新';
+    go.textContent = up.error ? '重试' : '更新';
   }
 
   // 设置面板里那行版本号
@@ -1021,16 +1027,30 @@ async function doInstallUpdate() {
   try {
     const r = await window.zt.installUpdate();
     if (!r.ok) {
-      toast(r.error || '更新失败', 'bad');
-      go.disabled = false;
-      go.textContent = '更新';
+      toast(r.error || '更新失败', r.cancelled ? '' : 'bad');
+      renderUpdate();
       return;
     }
     toast('下载完成，正在替换文件并重启…', 'ok');
   } catch (e) {
     toast(String(e.message || e), 'bad');
-    go.disabled = false;
-    go.textContent = '更新';
+    renderUpdate();
+  }
+}
+
+async function cancelUpdateDownload() {
+  const button = $('ub-cancel');
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const r = await window.zt.cancelUpdate();
+    if (!r.ok) {
+      toast(r.error || '取消下载失败', 'bad');
+      renderUpdate();
+    }
+  } catch (e) {
+    toast(String(e.message || e), 'bad');
+    renderUpdate();
   }
 }
 
@@ -1330,6 +1350,7 @@ function bind() {
   // 更新相关
   $('btn-check-update').addEventListener('click', checkUpdateManual);
   $('ub-go').addEventListener('click', doInstallUpdate);
+  $('ub-cancel').addEventListener('click', cancelUpdateDownload);
   $('ub-close').addEventListener('click', () => {
     S.upDismissed = true;
     renderUpdate();

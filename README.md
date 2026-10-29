@@ -2,7 +2,7 @@
 
 用 Electron 将指派给自己的禅道任务、缺陷放到桌面。默认显示悬浮球，悬停展开待办面板，也可以切换为常驻完整面板。
 
-当前源码版本：`0.3.15`。本项目使用禅道 REST API v1；不是禅道网页的完整替代，也不是实时推送客户端。
+当前源码版本：`0.3.16`。本项目使用禅道 REST API v1；不是禅道网页的完整替代，也不是实时推送客户端。
 
 ## 能做什么
 
@@ -22,6 +22,8 @@
 ### Windows 绿色版
 
 从本仓库 [Releases](https://github.com/yayalee-last/zenway-dashboard-tool/releases) 下载 `ZentaoWidget-win32-x64.zip`，**完整解压**后运行目录中的 `ZentaoWidget.exe`，不要只复制 exe，也不要在压缩包内直接运行。
+
+GitHub 下载失败时，可尝试[备用下载（GH-Proxy 公共代理）](https://gh-proxy.com/https://github.com/yayalee-last/zenway-dashboard-tool/releases/latest/download/ZentaoWidget-win32-x64.zip)。该地址提供最新正式版完整包，由第三方代理转发，无需安装代理软件。
 
 当前打包脚本只产出 **Windows x64** 绿色版；打包时修改 exe 资源后原 Electron 签名会失效，脚本没有重新签名。请只使用信任的来源，按组织安全策略处理系统提示，不要关闭安全软件。
 
@@ -129,6 +131,10 @@ release/
 ```
 
 更新器只有在版本、Electron、平台和架构等元数据匹配时才选择应用小包，否则回退完整包；Windows 更新助手有等待超时和失败回滚处理，但仍应先备份重要配置。程序目录必须可写，替换失败时查看用户数据下 `updates/` 内的日志。
+
+更新下载连续 30 秒未收到数据会超时。下载期间可点「取消下载」中断请求；取消后可重新点击「更新」，下载失败后可点击「重试」，均从头下载。下载完成进入安装准备后不再提供取消。
+
+版本检查、更新元数据和更新包优先直连 GitHub；网络失败、超时、限流或下载校验失败时，自动经 [GH-Proxy](https://gh-proxy.com/docs/github-accelerator) 尝试一次备用请求。每个来源的版本/元数据请求最多等待 12 秒，下载按每个来源连续 30 秒无数据超时计算；手动取消立即停止，不触发换源。只代理本项目的公开 GitHub 更新资源，自定义更新地址不会自动转发，也不向代理发送禅道地址、账号、密码或 Token。公共代理由第三方维护，可能限流或失效；SHA-256 校验不等同于发布签名。
 
 `.github/workflows/release.yml` 在 `main` 推送或手动运行时进入流程，其中仅手动触发或 `release:` 开头的提交执行发布 job；使用 Windows 和 Node.js 22，测试后打包、发布。普通 PR 没有配置自动验证流水线。`WECOM_WEBHOOK_URL` 是可选发布通知 Secret，只在确认正式 Release 已公开后发送通知；不要将令牌或 webhook 写进源码。
 

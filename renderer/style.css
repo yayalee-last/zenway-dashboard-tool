@@ -1281,6 +1281,10 @@ input::placeholder {
   color: var(--text-faint);
 }
 
+.ub-close[hidden] {
+  display: none;
+}
+
 .ub-close:hover {
   color: var(--text-dim);
 }

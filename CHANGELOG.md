@@ -4,6 +4,13 @@
 
 ## 未发布
 
+## [0.3.16](https://github.com/yayalee-last/zenway-dashboard-tool/compare/v0.3.15...v0.3.16) — 2026-10-29
+
+### 修复
+
+- 更新下载连续 30 秒无数据时超时退出，支持手动取消；取消或失败后恢复可下载状态，允许重新下载。下载完成进入安装准备后停止提供取消。
+- 更新检查、元数据和安装包下载在 GitHub 直连失败后，自动通过 GH-Proxy 公共代理尝试一次；保留超时、手动取消及包校验，仅转发本项目公开更新地址，提供完整包备用下载链接。
+
 ## [0.3.15](https://github.com/yayalee-last/zenway-dashboard-tool/compare/v0.3.14...v0.3.15) — 2026-10-28
 
 ### 修复

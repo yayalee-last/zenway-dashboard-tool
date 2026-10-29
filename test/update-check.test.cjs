@@ -45,7 +45,7 @@ function fixture(t, { packaged = true } = {}) {
     require(name) { return name === 'electron' ? electron : realRequire(name); },
     module: { exports: {} }, __dirname: path.dirname(source), __filename: source,
     process: { argv: [], execPath: process.execPath, platform: process.platform, env: {} },
-    Buffer, console, Date: FakeDate, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
+    Buffer, console, AbortController, Date: FakeDate, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
     setInterval: clock.setInterval, clearInterval: clock.clearTimeout,
   });
   vm.runInContext(fs.readFileSync(source, 'utf8') + `
@@ -59,12 +59,12 @@ module.exports = {
 };`, context, { filename: source });
   const main = context.module.exports;
   main.setClient({ configured: false, applyConfig() {} });
-  main.setWindow({
-    isDestroyed: () => false, setAlwaysOnTop() {},
-    webContents: { send: (channel, state) => messages.push({ channel, state }) },
-  });
+  const webContents = { mainFrame: {}, send: (channel, state) => messages.push({ channel, state }) };
+  main.setWindow({ isDestroyed: () => false, setAlwaysOnTop() {}, webContents });
   main.wireIpc();
-  return { main, app, clock, messages, save: patch => handlers.get('config:save')(null, patch) };
+  return { main, app, clock, messages, save: patch => handlers.get('config:save')(null, patch),
+    invoke: (name, event = { sender: webContents, senderFrame: webContents.mainFrame }) => handlers.get(name)(event),
+  };
 }
 
 const latest = () => ({ ok: true, latest: 'v0.3.5', hasUpdate: true, asset: { kind: 'app' } });
@@ -146,4 +146,78 @@ test('checking and downloading do not trigger overlapping release requests', asy
   f.main.scheduleUpdateChecks();
   await f.clock.advance(8000);
   assert.equal(calls, 1);
+});
+
+test('cancel IPC aborts only the active download and allows retry', async t => {
+  const f = fixture(t);
+  let attempts = 0, installs = 0, activeSignal;
+  f.main.setUpdate({ ...latest(), asset: { kind: 'app' } });
+  f.main.setUpdater({
+    download(_asset, onProgress, { signal }) {
+      attempts++;
+      activeSignal = signal;
+      onProgress({ percent: 25 });
+      if (attempts > 1) return Promise.resolve({ zipPath: 'fixture.zip' });
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    },
+    async install() { installs++; return { script: {} }; },
+  });
+  const pending = f.invoke('update:install');
+  assert.equal(f.main.publicUpdate().canCancel, true);
+  assert.equal((await f.invoke('update:install')).ok, false);
+  assert.equal((await f.invoke('update:cancel', { sender: {}, senderFrame: {} })).ok, false);
+  assert.equal(activeSignal.aborted, false, 'foreign renderer must not cancel the download');
+  assert.equal((await f.invoke('update:cancel')).ok, true);
+  const cancelled = await pending;
+  assert.equal(cancelled.cancelled, true);
+  assert.equal(f.main.publicUpdate().downloading, false);
+  assert.equal(f.main.publicUpdate().canCancel, false);
+  assert.equal(f.main.publicUpdate().percent, null);
+  assert.equal(f.main.publicUpdate().error, null);
+  assert.equal(installs, 0);
+  assert.equal((await f.invoke('update:install')).ok, true);
+  assert.equal(attempts, 2);
+  assert.equal(installs, 1);
+});
+
+test('download failure releases state so the same update can be downloaded again', async t => {
+  const f = fixture(t);
+  let attempts = 0;
+  f.main.setUpdate({ ...latest(), asset: { kind: 'app' } });
+  f.main.setUpdater({
+    async download() {
+      if (++attempts === 1) throw new Error('更新下载超时，请检查网络后重试');
+      return { zipPath: 'fixture.zip' };
+    },
+    async install() { return { script: {} }; },
+  });
+  const failed = await f.invoke('update:install');
+  assert.equal(failed.ok, false);
+  assert.match(failed.error, /超时/);
+  assert.equal(f.main.publicUpdate().downloading, false);
+  assert.equal(f.main.publicUpdate().canCancel, false);
+  assert.equal(f.main.publicUpdate().percent, null);
+  assert.equal((await f.invoke('update:install')).ok, true);
+  assert.equal(attempts, 2);
+  assert.equal(f.main.publicUpdate().error, null);
+});
+
+test('cancellation is unavailable once download has entered installation', async t => {
+  const f = fixture(t);
+  let finishInstall;
+  let enteredInstall;
+  const installing = new Promise(resolve => { enteredInstall = resolve; });
+  f.main.setUpdate({ ...latest(), asset: { kind: 'app' } });
+  f.main.setUpdater({
+    async download() { return { zipPath: 'fixture.zip' }; },
+    install() { enteredInstall(); return new Promise(resolve => { finishInstall = resolve; }); },
+  });
+  const pending = f.invoke('update:install');
+  await installing;
+  assert.equal(f.main.publicUpdate().downloading, true);
+  assert.equal(f.main.publicUpdate().canCancel, false);
+  assert.equal((await f.invoke('update:cancel')).ok, false);
+  assert.equal((await f.invoke('update:install')).ok, false);
+  finishInstall({ script: {} });
+  assert.equal((await pending).ok, true);
 });

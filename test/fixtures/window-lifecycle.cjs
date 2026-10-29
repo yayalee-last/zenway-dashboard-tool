@@ -29,12 +29,102 @@ const main = new Module(source, module);
 main.filename = source;
 main.paths = Module._nodeModulePaths(path.dirname(source));
 main._compile(fs.readFileSync(source, 'utf8') + `
-module.exports = { getWindow: () => win, getFloatingBall: () => floatingBall, getState: () => state, toggleWindow, showAndFocus, doRefresh, buildTrayMenu, pushState, loadConfig, createWindow };
+module.exports = { getWindow: () => win, getFloatingBall: () => floatingBall, getState: () => state, toggleWindow, showAndFocus, doRefresh, buildTrayMenu, pushState, loadConfig, createWindow, publicUpdate,
+  setUpdater(value) { const previous = updater; updater = value; return previous; },
+  setUpdate(value) { update = { ...update, ...value }; pushUpdate(); }
+};
 `, source);
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const samples = [];
 const report = value => fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify(value, null, 2));
+
+async function verifyUpdateDownload(win) {
+  const http = require('node:http');
+  const { createHash } = require('node:crypto');
+  const { Updater } = require('../../electron/updater');
+  const payload = Buffer.from('verified application archive fixture');
+  let complete = false, requests = 0, timeoutMs = 5000, installing = false, stopInstall;
+  const server = http.createServer((_request, response) => {
+    requests++;
+    response.writeHead(200, { 'Content-Length': payload.length });
+    if (complete) response.end(payload);
+    else response.write(payload.subarray(0, 3));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const updater = new Updater({ currentVersion: '0.0.0', stateDir: profile, appDir: output });
+  const download = updater.download.bind(updater);
+  updater.download = (asset, progress, options) => download(asset, progress, { ...options, timeoutMs });
+  updater.install = zipPath => {
+    assert.deepEqual(fs.readFileSync(zipPath), payload);
+    installing = true;
+    return new Promise((_resolve, reject) => { stopInstall = reject; });
+  };
+  const originalUpdater = main.exports.setUpdater(updater);
+  const asset = { name: 'fixture-app.zip', kind: 'app', size: payload.length,
+    sha256: createHash('sha256').update(payload).digest('hex'),
+    url: `http://127.0.0.1:${server.address().port}/update` };
+  const waitFor = async predicate => {
+    const deadline = Date.now() + 5000;
+    while (!await predicate()) {
+      if (Date.now() > deadline) throw new Error('Update download UI did not reach the expected state');
+      await pause(20);
+    }
+  };
+  const run = code => win.webContents.executeJavaScript(code);
+  const click = id => run(`document.getElementById('${id}').click()`);
+  const visible = id => run(`getComputedStyle(document.getElementById('${id}')).display !== 'none'`);
+  const artifacts = process.env.ZT_PREVIEW_ARTIFACT_DIR || output;
+  try {
+    main.exports.setUpdate({ latest: 'v99.0.0', hasUpdate: true, asset });
+    await waitFor(() => visible('ub-go'));
+    await run("document.getElementById('ub-go').click(); document.getElementById('ub-go').click()");
+    await waitFor(() => main.exports.publicUpdate().percent > 0);
+    assert.equal(requests, 1, 'repeated update clicks must keep a single download');
+    assert.equal(await visible('ub-cancel'), true);
+    assert.equal(await visible('ub-go'), false);
+    assert.equal(await visible('ub-close'), false);
+    fs.writeFileSync(path.join(artifacts, 'update-downloading.png'), (await win.capturePage()).toPNG());
+    await run("openSettings(); closeSettings()");
+    await main.exports.doRefresh('manual');
+    main.exports.toggleWindow();
+    main.exports.toggleWindow();
+    await run("document.getElementById('ub-cancel').click(); document.getElementById('ub-cancel').click()");
+    await waitFor(() => !main.exports.publicUpdate().downloading);
+    await waitFor(() => visible('ub-go'));
+    assert.equal(main.exports.publicUpdate().error, null);
+    assert.equal(installing, false);
+    assert.equal(fs.existsSync(path.join(profile, 'updates', asset.name)), false);
+    assert.equal(await visible('ub-cancel'), false);
+    assert.equal(await visible('ub-close'), true);
+
+    timeoutMs = 300;
+    await click('ub-go');
+    await waitFor(() => Boolean(main.exports.publicUpdate().error));
+    await waitFor(() => run("document.getElementById('ub-go').textContent === '重试'"));
+    assert.match(main.exports.publicUpdate().error, /下载.*超时/);
+    assert.equal(requests, 2);
+    assert.equal(await visible('ub-cancel'), false);
+    fs.writeFileSync(path.join(artifacts, 'update-retry.png'), (await win.capturePage()).toPNG());
+
+    complete = true;
+    timeoutMs = 5000;
+    await click('ub-go');
+    await waitFor(() => installing);
+    await waitFor(async () => !await visible('ub-cancel'));
+    assert.equal(requests, 3);
+    assert.equal(await visible('ub-go'), false);
+    assert.equal((await run('window.zt.cancelUpdate()')).ok, false, 'installation must not be cancellable');
+    assert.equal(await run("document.getElementById('ub-text').textContent"), '正在准备更新…');
+    stopInstall(new Error('Fixture stops before replacing any application files'));
+    await waitFor(() => !main.exports.publicUpdate().downloading);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    main.exports.setUpdater(originalUpdater);
+    main.exports.setUpdate({ latest: null, hasUpdate: false, asset: null, error: null, percent: null });
+  }
+}
 
 app.whenReady().then(async () => {
   let peer;
@@ -168,6 +258,7 @@ app.whenReady().then(async () => {
     assert.equal(await barHidden(), true, 'same release must respect dismissal');
     await sendRelease('v0.3.6');
     assert.equal(await barHidden(), false, 'a newer release must become visible again');
+    await verifyUpdateDownload(win);
     await sendRelease('v0.3.6', false);
     // Update notifications must size the visible page, even when the list is hidden.
     const listHeight = win.getSize()[1];

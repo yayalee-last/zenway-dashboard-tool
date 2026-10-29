@@ -22,8 +22,61 @@ const { execFile, spawn } = require('node:child_process');
 
 const DEFAULT_API =
   'https://api.github.com/repos/yayalee-last/zenway-dashboard-tool/releases/latest';
+const UPDATE_PROXY = 'https://gh-proxy.com/';
 
 const UA = 'zentao-widget-updater';
+
+// 仅为本应用公开的版本接口和发行附件提供公共代理回退。
+function proxyUpdateUrl(url) {
+  let target;
+  try { target = new URL(url); } catch { return null; }
+  if (target.username || target.password || target.search || target.hash) return null;
+  if (target.href === DEFAULT_API) return UPDATE_PROXY + target.href;
+  if (target.origin !== 'https://github.com' ||
+      !/^\/yayalee-last\/zenway-dashboard-tool\/releases\/download\/[^/]+\/(?:ZentaoWidget-app\.zip|ZentaoWidget-win32-x64\.zip|ZentaoWidget-update\.json)$/.test(target.pathname)) return null;
+  return UPDATE_PROXY + target.href;
+}
+
+async function fetchUpdate(url, { signal, timeoutMs, headers }, readResponse) {
+  const proxy = proxyUpdateUrl(url);
+  const routes = proxy ? [url, proxy] : [url];
+  for (let index = 0; index < routes.length; index++) {
+    signal?.throwIfAborted();
+    const controller = new AbortController();
+    const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(routes[index], { headers, signal: requestSignal, redirect: 'follow' });
+      if (index + 1 < routes.length &&
+          ([403, 408, 429].includes(response.status) || response.status >= 500)) {
+        await response.body?.cancel();
+        continue;
+      }
+      timer.refresh();
+      return await readResponse(response, { signal: requestSignal, timer });
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (index + 1 === routes.length) {
+        if (controller.signal.aborted) throw controller.signal.reason;
+        throw error;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+async function readUpdateJson(response) {
+  const text = await response.text();
+  let body = null;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    if (response.ok) throw new Error('更新服务未返回有效的 JSON');
+  }
+  return { ok: response.ok, status: response.status, body };
+}
+
 
 function releaseAsset(asset, kind = 'full', sha256) {
   if (!asset) return null;
@@ -99,21 +152,11 @@ class Updater {
   /* --- 1. 查询 --- */
 
   async check({ timeoutMs = 12000 } = {}) {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
-      const res = await fetch(this.apiUrl, {
-        headers: { 'User-Agent': UA, Accept: 'application/json' },
-        signal: ac.signal,
-      });
-
-      const text = await res.text();
-      let body = null;
-      try {
-        body = JSON.parse(text);
-      } catch {
-        /* 非 JSON，下面按状态码给提示 */
-      }
+      const res = await fetchUpdate(this.apiUrl, {
+        headers: { 'User-Agent': UA, Accept: 'application/json' }, timeoutMs,
+      }, readUpdateJson);
+      const { body } = res;
 
       if (!res.ok) {
         const msg = body && (body.message || body.error);
@@ -143,12 +186,11 @@ class Updater {
 
       if (hasUpdate && metadata && process.versions.electron) {
         try {
-          const response = await fetch(metadata.browser_download_url, {
-            headers: { 'User-Agent': UA },
-            signal: ac.signal,
-          });
+          const response = await fetchUpdate(metadata.browser_download_url, {
+            headers: { 'User-Agent': UA }, timeoutMs,
+          }, readUpdateJson);
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const manifest = await response.json();
+          const manifest = response.body;
           const appAsset = assets.find((a) => a.name === APP_ARCHIVE);
           if (manifest.schemaVersion === UPDATE_SCHEMA &&
               manifest.version === latest.replace(/^v/i, '') &&
@@ -178,52 +220,63 @@ class Updater {
     } catch (e) {
       if (e.name === 'AbortError') return { ok: false, error: '检查更新超时（网络不通？）' };
       return { ok: false, error: `检查更新失败：${e.message || e}` };
-    } finally {
-      clearTimeout(timer);
     }
   }
 
   /* --- 2. 下载 --- */
 
-  async download(asset, onProgress) {
+  async download(asset, onProgress, { signal, timeoutMs = 30000 } = {}) {
     if (!asset || !asset.url) throw new Error('发行版里没有可下载的压缩包');
+    if (asset.kind === 'app' && !asset.sha256) throw new Error('应用更新包缺少校验信息');
     fs.mkdirSync(this.updateDir, { recursive: true });
 
     const safeName = String(asset.name || 'update.zip').replace(/[^\w.\-]+/g, '_');
     const zipPath = path.join(this.updateDir, safeName);
     const partPath = zipPath + '.part';
+    let downloaded;
+    try {
+      downloaded = await fetchUpdate(asset.url, {
+        headers: { 'User-Agent': UA }, signal, timeoutMs,
+      }, async (res, { signal: downloadSignal, timer }) => {
+        if (!res.ok) {
+          await res.body?.cancel();
+          return { error: `下载失败：HTTP ${res.status}` };
+        }
+        const total = Number(res.headers.get('content-length')) || asset.size || 0;
+        const chunks = [];
+        let received = 0;
+        let lastEmit = 0;
 
-    const res = await fetch(asset.url, {
-      headers: { 'User-Agent': UA },
-      redirect: 'follow',
-    });
-    if (!res.ok) throw new Error(`下载失败：HTTP ${res.status}`);
+        for await (const chunk of res.body) {
+          if (chunk.length) timer.refresh();
+          chunks.push(chunk);
+          received += chunk.length;
+          const now = Date.now();
+          if (onProgress && (now - lastEmit > 120 || (total && received >= total))) {
+            lastEmit = now;
+            onProgress({ received, total, percent: total ? Math.min(100, Math.round((received / total) * 100)) : null });
+          }
+        }
 
-    const total = Number(res.headers.get('content-length')) || asset.size || 0;
-    const chunks = [];
-    let received = 0;
-    let lastEmit = 0;
-
-    for await (const chunk of res.body) {
-      chunks.push(chunk);
-      received += chunk.length;
-      const now = Date.now();
-      if (onProgress && (now - lastEmit > 120 || (total && received >= total))) {
-        lastEmit = now;
-        onProgress({ received, total, percent: total ? Math.min(100, Math.round((received / total) * 100)) : null });
-      }
+        downloadSignal.throwIfAborted();
+        const buf = Buffer.concat(chunks);
+        if (total && buf.length !== total) {
+          throw new Error(`下载不完整：收到 ${buf.length} 字节，应为 ${total}`);
+        }
+        if (asset.sha256 && createHash('sha256').update(buf).digest('hex') !== asset.sha256) {
+          throw new Error('更新包校验失败，请重新下载');
+        }
+        return { buf };
+      });
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (error.name === 'AbortError') throw new Error('更新下载超时，请检查网络后重试');
+      throw error;
     }
 
-    const buf = Buffer.concat(chunks);
-    if (total && buf.length !== total) {
-      throw new Error(`下载不完整：收到 ${buf.length} 字节，应为 ${total}`);
-    }
-
-    if (asset.kind === 'app' && !asset.sha256) throw new Error('应用更新包缺少校验信息');
-    if (asset.sha256 && createHash('sha256').update(buf).digest('hex') !== asset.sha256) {
-      throw new Error('更新包校验失败，请重新下载');
-    }
-
+    if (downloaded.error) throw new Error(downloaded.error);
+    signal?.throwIfAborted();
+    const { buf } = downloaded;
     fs.writeFileSync(partPath, buf);
     fs.renameSync(partPath, zipPath);
     if (onProgress) onProgress({ received: buf.length, total: buf.length, percent: 100 });

@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('zt', {
   togglePin: () => ipcRenderer.invoke('win:toggle-pin'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  cancelUpdate: () => ipcRenderer.invoke('update:cancel'),
   openRelease: () => ipcRenderer.invoke('update:open-release'),
   onState: (fn) => ipcRenderer.on('state', (_e, s) => fn(s)),
   onOpenSettings: (fn) => ipcRenderer.on('open-settings', () => fn()),

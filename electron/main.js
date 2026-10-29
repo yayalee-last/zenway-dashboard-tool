@@ -42,6 +42,7 @@ let updateTimer = null;
 let refreshing = false;
 let state = { ok: false, items: [], at: 0, error: null, needSetup: true };
 let updater = null;
+let updateDownloadController = null;
 const actionInFlight = new Set();
 const uncertainActions = new Map();
 let actionRevision = 0;
@@ -380,6 +381,7 @@ function publicUpdate() {
     current: app.getVersion(),
     checking: update.checking,
     downloading: update.downloading,
+    canCancel: Boolean(updateDownloadController && !updateDownloadController.signal.aborted),
     checkedAt: update.checkedAt,
     latest: update.latest,
     hasUpdate: update.hasUpdate,
@@ -445,6 +447,8 @@ async function installUpdate() {
   if (update.downloading) return { ok: false, error: '正在下载中' };
   if (!update.asset) return { ok: false, error: '没有可用的更新包' };
 
+  const downloadController = new AbortController();
+  updateDownloadController = downloadController;
   update.downloading = true;
   update.percent = 0;
   update.error = null;
@@ -455,7 +459,10 @@ async function installUpdate() {
     const { zipPath } = await updater.download(update.asset, (p) => {
       update.percent = p.percent;
       pushUpdate();
-    });
+    }, { signal: downloadController.signal });
+    downloadController.signal.throwIfAborted();
+    updateDownloadController = null;
+    pushUpdate();
 
     // 解压 + 生成替换脚本，成功后才退出自己
     const { script } = await updater.install(zipPath, update.latest, update.asset);
@@ -478,13 +485,21 @@ async function installUpdate() {
 
     return { ok: true };
   } catch (e) {
+    const cancelled = downloadController.signal.aborted;
+    updateDownloadController = null;
     update.downloading = false;
     update.percent = null;
-    update.error = e.message || String(e);
+    update.error = cancelled ? null : e.message || String(e);
     pushUpdate();
     updateTrayMenu();
-    return { ok: false, error: update.error };
+    return { ok: false, cancelled, error: cancelled ? '已取消更新下载' : update.error };
   }
+}
+
+function cancelUpdateDownload() {
+  if (!updateDownloadController) return { ok: false, error: '当前没有可取消的下载' };
+  updateDownloadController.abort(new Error('已取消更新下载'));
+  return { ok: true };
 }
 
 /* ---------------- 刷新 ---------------- */
@@ -785,6 +800,10 @@ function wireIpc() {
 
   ipcMain.handle('update:check', () => checkUpdate());
   ipcMain.handle('update:install', () => installUpdate());
+  ipcMain.handle('update:cancel', (event) => {
+    if (!mainSender(event)) return { ok: false, error: '更新请求来源无效' };
+    return cancelUpdateDownload();
+  });
   ipcMain.handle('update:state', () => publicUpdate());
   ipcMain.handle('update:open-release', () => {
     shell.openExternal('https://github.com/yayalee-last/zenway-dashboard-tool/releases');
