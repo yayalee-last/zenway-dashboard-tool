@@ -135,7 +135,8 @@ app.whenReady().then(async () => {
   const snapshot = label => samples.push({ label, visible: win.isVisible(), pinned: win.isAlwaysOnTop(), bounds: win.getBounds() });
   try {
     const deadline = Date.now() + 10000;
-    while (!main.exports.getFloatingBall()?.window.isVisible() || win.webContents.isLoading()) {
+    // 首次刷新完成后再取高度，避免比较空列表与刷新后的列表。
+    while (!main.exports.getFloatingBall()?.window.isVisible() || win.webContents.isLoading() || !main.exports.getState().ok) {
       if (Date.now() > deadline) throw new Error('Window did not become ready');
       await pause(50);
     }
