@@ -2,7 +2,7 @@
 
 const path = require('node:path');
 const fs = require('node:fs');
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, shell, clipboard, nativeImage, screen } = require('electron');
 const { ZentaoClient, ZentaoError, normalizeBaseUrl } = require('./zentao');
 const { Updater } = require('./updater');
 const { createFloatingBall } = require('./floating-ball');
@@ -856,6 +856,16 @@ function wireIpc() {
 
   ipcMain.handle('open:external', (_e, url) => {
     if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);
+  });
+
+  ipcMain.handle('clipboard:copy-url', async (event, url, title) => {
+    if (!mainSender(event)) return { ok: false, error: '复制请求来源无效' };
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url) || !URL.canParse(url)) {
+      return { ok: false, error: '链接无效，无法复制' };
+    }
+    if (typeof title !== 'string' || !title.trim()) return { ok: false, error: '标题无效，无法复制' };
+    await clipboard.writeText(`${title}\n${url}`);
+    return { ok: true };
   });
 
   ipcMain.handle('attachment:open', (_e, payload) => openAttachment(payload));

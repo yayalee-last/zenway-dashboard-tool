@@ -417,7 +417,7 @@ function openTaskAction(action, it) {
   $('tm-task').textContent = it.name;
   $('tm-consumed-label').textContent = finishing ? '本次消耗（小时）' : '预计消耗（小时）';
   $('tm-consumed').value = finishing ? String(it.left || 0) : '0.5';
-  $('tm-left').value = finishing ? '0' : String(it.left || 0);
+  $('tm-left').value = finishing ? '0' : String(it.left || 72);
   $('tm-err').hidden = true;
   $('tm-ok').disabled = locked || uncertain;
   $('tm-ok').textContent = locked ? '请求处理中…' : '确认';
@@ -570,6 +570,10 @@ function fmtDT(v) {
   if (Number.isNaN(d.getTime())) return s.slice(0, 16).replace('T', ' ');
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function detailUrl() {
+  return DT.data.url || (DT.kind === 'bug' ? bugUrl(DT.data.id) : taskUrl(DT.data.id));
 }
 
 async function openDetail(it) {
@@ -1282,8 +1286,18 @@ function bind() {
   $('f-baseUrl').addEventListener('input', updateBaseHint);
 
   $('dt-back').addEventListener('click', closeDetail);
+  $('dt-copy').addEventListener('click', async () => {
+    if (!DT.data) return;
+    try {
+      const title = DT.kind === 'bug' ? DT.data.title : DT.data.name;
+      const r = await window.zt.copyUrl(detailUrl(), title);
+      toast(r.ok ? '标题和链接已复制' : r.error, r.ok ? 'ok' : 'bad');
+    } catch {
+      toast('复制失败，请重试', 'bad');
+    }
+  });
   $('dt-open').addEventListener('click', () => {
-    if (DT.data) window.zt.open(DT.data.url || taskUrl(DT.data.id));
+    if (DT.data) window.zt.open(detailUrl());
   });
   // 描述里的链接不要抢走挂件本身
   $('dt-body').addEventListener('click', (e) => {

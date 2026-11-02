@@ -76,6 +76,32 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+test('start defaults zero or missing remaining hours to 72 and preserves existing hours', async () => {
+  for (const [left, expected] of [[0, 72], [undefined, 72], [2, 2]]) {
+    const h = rendererHarness();
+    h.window.taskActionResult = request => Promise.resolve({ ok: true, status: request.payload.left > 0 ? 'doing' : 'done' });
+    h.context.openTaskAction('start', { id: 109, name: 'Fixture task', status: 'wait', left });
+    await h.context.confirmTaskAction();
+    assert.equal(h.writes.length, 1);
+    assert.deepEqual(JSON.parse(JSON.stringify(h.writes[0])), { id: 109, action: 'start', payload: { consumed: 0.5, left: expected } });
+    assert.equal(h.get('toast').textContent, '已开始');
+  }
+});
+
+test('finish and explicitly entered zero hours retain completion behavior', async () => {
+  for (const action of ['start', 'finish']) {
+    const h = rendererHarness();
+    h.window.taskActionResult = () => Promise.resolve({ ok: true, status: 'done' });
+    h.context.openTaskAction(action, { id: 109, name: 'Fixture task', status: action === 'start' ? 'wait' : 'doing', left: 2 });
+    if (action === 'start') h.get('tm-left').value = '0';
+    await h.context.confirmTaskAction();
+    assert.equal(h.writes.length, 1);
+    assert.equal(h.writes[0].action, action);
+    assert.equal(h.writes[0].payload.left, 0);
+    assert.equal(h.get('toast').textContent, '已完成');
+  }
+});
+
 test('opening a close confirmation preserves a tall list instead of shrinking it below the pointer', () => {
   const h = rendererHarness({ innerHeight: 675, listHeight: 675 });
   h.context.openTaskAction('close', { id: 7, name: 'Completed fixture task', status: 'done' });
