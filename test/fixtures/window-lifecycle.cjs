@@ -135,8 +135,9 @@ app.whenReady().then(async () => {
   const snapshot = label => samples.push({ label, visible: win.isVisible(), pinned: win.isAlwaysOnTop(), bounds: win.getBounds() });
   try {
     const deadline = Date.now() + 10000;
-    // 首次刷新完成后再取高度，避免比较空列表与刷新后的列表。
-    while (!main.exports.getFloatingBall()?.window.isVisible() || win.webContents.isLoading() || !main.exports.getState().ok) {
+    // Main state is ready before its IPC update and resize have reached the renderer.
+    while (!main.exports.getFloatingBall()?.window.isVisible() || win.webContents.isLoading() || !main.exports.getState().ok ||
+      !(await win.webContents.executeJavaScript(`S.st.ok && S.items.length === ${main.exports.getState().items.length}`))) {
       if (Date.now() > deadline) throw new Error('Window did not become ready');
       await pause(50);
     }
@@ -157,6 +158,11 @@ app.whenReady().then(async () => {
     await pause(200);
     assert.equal(win.isVisible(), true, 'hovering the ball must open the panel');
     assert.equal(win.isFocused(), false, 'hover must not steal keyboard focus');
+    await win.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    while (await win.webContents.executeJavaScript('outerHeight') !== win.getSize()[1]) {
+      if (Date.now() > deadline) throw new Error('Initial rendered viewport did not reach native bounds');
+      await pause(25);
+    }
     const hoverHeight = win.getSize()[1];
     fs.writeFileSync(path.join(output, 'ball.png'), (await ball.capturePage()).toPNG());
     fs.writeFileSync(path.join(output, 'hover-panel.png'), (await win.capturePage()).toPNG());
