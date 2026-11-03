@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('zt', {
   copyUrl: (url, title) => ipcRenderer.invoke('clipboard:copy-url', url, title),
   openAttachment: (payload) => ipcRenderer.invoke('attachment:open', payload),
   taskDetail: (id) => ipcRenderer.invoke('task:detail', id),
+  taskAssignees: (id) => ipcRenderer.invoke('task:assignees', id),
   taskAction: (payload) => ipcRenderer.invoke('task:action', payload),
   bugDetail: (id) => ipcRenderer.invoke('bug:detail', id),
   bugAction: (payload) => ipcRenderer.invoke('bug:action', payload),

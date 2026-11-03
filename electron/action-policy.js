@@ -5,7 +5,7 @@ const { positiveId } = require('./request-safety');
 function actionPayload(kind, action, input = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('操作参数无效');
   const fields = kind === 'task'
-    ? { start: ['consumed', 'left', 'realStarted'], finish: ['currentConsumed', 'left', 'realStarted', 'finishedDate', 'comment'], close: ['closedReason'] }
+    ? { start: ['consumed', 'left', 'realStarted'], finish: ['currentConsumed', 'left', 'realStarted', 'finishedDate', 'comment'], close: ['closedReason'], assign: ['assignedTo'] }
     : { resolve: ['resolution', 'resolvedBuild', 'comment', 'assignedTo', 'duplicateBug'], close: ['comment'] };
   if (!fields[action] || Object.keys(input).some(key => !fields[action].includes(key))) throw new Error('操作参数不在允许范围');
   const out = { ...input };
@@ -18,6 +18,8 @@ function actionPayload(kind, action, input = {}) {
   for (const key of ['realStarted', 'finishedDate']) {
     if (out[key] !== undefined && (!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?$/.test(out[key]) || !Number.isFinite(new Date(out[key]).getTime()))) throw new Error('任务时间格式无效');
   }
+  if (kind === 'task' && action === 'assign' &&
+      (typeof out.assignedTo !== 'string' || !out.assignedTo || out.assignedTo.length > 100 || /[\u0000-\u0020\u007f]/.test(out.assignedTo))) throw new Error('请选择有效的指派人员');
   if (kind === 'task' && action === 'start') {
     out.consumed ??= 0;
     out.left ??= 0;
@@ -47,7 +49,10 @@ function actionPayload(kind, action, input = {}) {
 // plugin permissions remain enforced by ZenTao, not invented client-side.
 function applicableAction(kind, action, record) {
   const states = kind === 'task' ? { start: 'wait', finish: 'doing', close: 'done' } : { resolve: 'active', close: 'resolved' };
-  return Boolean(record && record.status === states[action] &&
+  const matches = kind === 'task' && action === 'assign'
+    ? ['wait', 'doing', 'pause', 'done', 'closed', 'cancel'].includes(record?.status)
+    : record?.status === states[action];
+  return Boolean(record && matches &&
     [undefined, false, 0, '0'].includes(record.deleted));
 }
 

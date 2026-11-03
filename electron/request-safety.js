@@ -11,7 +11,7 @@ function positiveId(value, label = '对象') {
 }
 
 function assertRestOperation(method, path) {
-  if (typeof path !== 'string' || !['GET', 'POST'].includes(method) || /[\s\\#]/.test(path)) {
+  if (typeof path !== 'string' || !['GET', 'POST', 'PUT'].includes(method) || /[\s\\#]/.test(path)) {
     throw new Error('已阻止未授权的禅道请求（禁止删除）');
   }
   const [route, search, extra] = path.split('?');
@@ -22,7 +22,12 @@ function assertRestOperation(method, path) {
     if (search !== undefined || !new RegExp(`^/api\\.php/v1/(?:tokens|tasks/${id}/(?:start|finish|close)|bugs/${id}/(?:resolve|close))$`).test(route)) {
       throw new Error('已阻止未授权的禅道写操作（禁止删除）');
     }
+  } else if (method === 'PUT') {
+    if (search !== undefined || !new RegExp(`^/api\\.php/v1/tasks/${id}$`).test(route)) {
+      throw new Error('已阻止未授权的禅道写操作（禁止删除）');
+    }
   } else if (/^\/api\.php\/v1\/(projects|executions|products)$/.test(route)) keys = ['page', 'recPerPage'];
+  else if (route === '/api.php/v1/users') keys = ['page', 'limit'];
   else if (route === '/api.php/v1/tasks') keys = ['page', 'recPerPage', 'assignedTo'];
   else if (new RegExp(`^/api\\.php/v1/executions/${id}/tasks$`).test(route)) keys = ['status', 'recPerPage', 'page'];
   else if (new RegExp(`^/api\\.php/v1/products/${id}/bugs$`).test(route)) keys = ['page', 'recPerPage'];

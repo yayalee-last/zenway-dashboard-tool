@@ -726,7 +726,7 @@ async function runAction(kind, event, request) {
   if (!mainSender(event)) return rejected('操作来源无效');
   if (!request || typeof request !== 'object' || Array.isArray(request)) return rejected('操作请求无效');
   const { id, action } = request;
-  const actions = kind === 'task' ? ['start', 'finish', 'close'] : ['resolve', 'close'];
+  const actions = kind === 'task' ? ['start', 'finish', 'close', 'assign'] : ['resolve', 'close'];
   if (!Number.isSafeInteger(id) || id <= 0 || !actions.includes(action)) return rejected('操作请求无效');
   let payload;
   try { payload = actionPayload(kind, action, request.payload); } catch (error) { return rejected(error.message); }
@@ -749,7 +749,7 @@ async function runAction(kind, event, request) {
   try {
     const current = await read();
     if (!current || Number(current.id) !== id) return rejected('当前详情不可用，请刷新或在禅道网页核对');
-    if (kind === 'task' && !isMine(current, account)) {
+    if (kind === 'task' && action !== 'assign' && !isMine(current, account)) {
       await doRefresh('action-rejected');
       return rejected('仅可操作当前明确指派给自己的任务；参考任务请在禅道网页处理');
     }
@@ -757,10 +757,16 @@ async function runAction(kind, event, request) {
       await doRefresh('action-rejected');
       return { ...rejected('服务器状态已变化或不可确认，当前不能执行此操作；已刷新列表，请查看最新详情，不会自动改成其他操作'), status: current.status || null };
     }
+    if (action === 'assign') {
+      if (accountOf(current) === payload.assignedTo) return rejected('已经指派给该人员');
+      const users = await operationClient.listUsers();
+      if (!users.some(user => user.account === payload.assignedTo)) return rejected('指派人员已不可用，请重新打开指派窗口');
+    }
     dispatched = true;
     if (kind === 'task') {
       if (action === 'start') await operationClient.startTask(id, payload, current);
       else if (action === 'finish') await operationClient.finishTask(id, payload, current);
+      else if (action === 'assign') await operationClient.assignTask(id, payload);
       else await operationClient.closeTask(id, payload.closedReason);
     } else if (action === 'resolve') await operationClient.resolveBug(id, payload);
     else await operationClient.closeBug(id, payload.comment);
@@ -768,11 +774,12 @@ async function runAction(kind, event, request) {
     await new Promise(resolve => setTimeout(resolve, 400));
     let verified;
     try { verified = await read(); } catch { /* An accepted write is not proof of its final state. */ }
-    const expected = { start: 'doing', finish: 'done', resolve: 'resolved', close: 'closed' }[action];
+    const expected = action === 'assign' ? current.status : { start: 'doing', finish: 'done', resolve: 'resolved', close: 'closed' }[action];
     await doRefresh('action');
     // 保留 22.6 开始时剩余为 0 直接完成的现有流程。
     const completedOnStart = action === 'start' && payload.left === 0 && verified?.status === 'done';
-    if (!verified || Number(verified.id) !== id || (verified.status !== expected && !completedOnStart) || ![undefined, false, 0, '0'].includes(verified.deleted)) {
+    const assigneeMatches = action !== 'assign' || accountOf(verified) === payload.assignedTo;
+    if (!verified || Number(verified.id) !== id || !assigneeMatches || (verified.status !== expected && !completedOnStart) || ![undefined, false, 0, '0'].includes(verified.deleted)) {
       markUncertain(key);
       return { ok: false, outcome: 'unknown', retrySafe: false,
         error: '请求已提交，但未能确认目标状态；这不表示记录已删除。请先在禅道网页或最新详情核对，勿直接重试', state, status: verified?.status || null };
@@ -870,6 +877,18 @@ function wireIpc() {
 
   ipcMain.handle('attachment:open', (_e, payload) => openAttachment(payload));
 
+  ipcMain.handle('task:assignees', async (event, id) => {
+    if (!mainSender(event) || !Number.isSafeInteger(id) || id <= 0) return { ok: false, error: '指派请求无效' };
+    const revision = connectionRevision, operationClient = client;
+    try {
+      const task = await operationClient.getTaskDetail(id);
+      if (!task || Number(task.id) !== id || !applicableAction('task', 'assign', task)) throw new Error('任务详情不可用，无法指派');
+      const users = await operationClient.listUsers();
+      if (revision !== connectionRevision) throw new Error('连接配置已变化，请重新打开指派窗口');
+      return { ok: true, users };
+    } catch (error) { return { ok: false, error: error.message || '读取人员失败' }; }
+  });
+
   ipcMain.handle('task:detail', async (_e, id) => {
     if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, error: '任务 ID 无效' };
     const key = actionKey('task', id), uncertainty = uncertainActions.get(key), revision = connectionRevision;
@@ -900,6 +919,8 @@ function wireIpc() {
           openedDate: d.openedDate || null,
           openedBy: (d.openedBy && (d.openedBy.realname || d.openedBy.account)) || '',
           assignedRealname: assigneeName(d),
+          assignedTo: accountOf(d),
+          canAssign: applicableAction('task', 'assign', d),
           isMine: mine,
           readOnly: !mine,
           writeStateKnown,

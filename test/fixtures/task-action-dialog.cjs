@@ -68,20 +68,23 @@ app.whenReady().then(async () => {
     await until(() => panel.isVisible(), 'hover expansion');
     enterPanel();
     await js("document.querySelector('[data-filter=all]').click()");
-    await pause(200);
-
-    const before = panel.getBounds();
+    // DOM rendering can finish before the native All-tab resize reaches this process.
+    let before, target;
+    await until(async () => {
+      before = panel.getBounds();
+      target = await js(`(() => {
+        const buttons = Array.from(document.querySelectorAll('.act.close'));
+        const index = buttons.findIndex(button => {
+          const rect = button.getBoundingClientRect();
+          return rect.y + rect.height / 2 > 340 && rect.bottom < innerHeight - 24;
+        });
+        if (index < 0) return null;
+        const rect = buttons[index].getBoundingClientRect();
+        return { index, x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, height: outerHeight };
+      })()`);
+      return Boolean(target && target.height === before.height);
+    }, 'All-tab native viewport');
     assert.equal(await js('outerHeight'), before.height, 'fixture renderer and native window must use the same height');
-    const target = await js(`(() => {
-      const buttons = Array.from(document.querySelectorAll('.act.close'));
-      const index = buttons.findIndex(button => {
-        const rect = button.getBoundingClientRect();
-        return rect.y + rect.height / 2 > 340 && rect.bottom < innerHeight - 24;
-      });
-      if (index < 0) return null;
-      const rect = buttons[index].getBoundingClientRect();
-      return { index, x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-    })()`);
     assert(target, 'fixture must click a visible close action below the old 320px dialog height');
     const content = panel.getContentBounds();
     cursor = { x: content.x + target.x, y: content.y + target.y };

@@ -22,6 +22,8 @@ function rendererHarness({ innerHeight = 675, outerHeight = innerHeight, zoom = 
     offsetHeight: 0, clientHeight: 0, children: [], style: {}, dataset: {},
     classList: { add() {}, remove() {}, toggle() {} },
     addEventListener(type, fn) { this.listeners ||= {}; this.listeners[type] = fn; },
+    append(...nodes) { this.children.push(...nodes); },
+    replaceChildren(...nodes) { this.children = nodes; },
     focus() {}, select() {},
   });
   const get = (id) => {
@@ -34,6 +36,7 @@ function rendererHarness({ innerHeight = 675, outerHeight = innerHeight, zoom = 
   const shell = { offsetHeight: listHeight };
   const document = {
     getElementById: get,
+    createElement: tag => makeElement(tag),
     querySelector(selector) { return selector === '.shell' ? shell : get(selector); },
     addEventListener(type, fn) { listeners.set(type, fn); },
   };
@@ -49,6 +52,9 @@ function rendererHarness({ innerHeight = 675, outerHeight = innerHeight, zoom = 
       taskAction(payload) { writes.push(payload); return window.taskActionResult ? window.taskActionResult(payload) : Promise.resolve({ ok: true, outcome: 'verified' }); },
       bugAction(payload) { bugWrites.push(payload); return window.bugActionResult ? window.bugActionResult(payload) : Promise.resolve({ ok: true, outcome: 'verified' }); },
       taskDetail(id) { detailReads.push(['task', id]); return Promise.resolve({ ok: true, task: { id } }); },
+      taskAssignees(id) { return window.assigneeResult ? window.assigneeResult(id) : Promise.resolve({ ok: true, users: [
+        { account: 'other', realname: '余长' }, { account: 'me', realname: '我' }, { account: 'next', realname: '李明' },
+      ] }); },
       bugDetail(id) { detailReads.push(['bug', id]); return Promise.resolve({ ok: true, bug: { id } }); },
       open(url) { openedUrls.push(url); },
       setTaskDialogOpen(open) { dialogStates.push(open); },
@@ -421,4 +427,125 @@ test('initial connection state does not release a task dialog that was never ope
   vm.runInContext('renderAll = () => {}', h.context);
   h.context.apply({ config: { baseUrl: 'https://initial.invalid', account: 'fixture' }, state: { items: [] } });
   assert.deepEqual(h.dialogStates, []);
+});
+
+const assignableTask = (id = 178) => ({ id, name: '参考任务', status: 'done', canAssign: true,
+  assignedTo: 'other', assignedRealname: '余长', isMine: false, readOnly: true });
+function chooseAssignee(h, account) {
+  h.get('tm-assignee').value = account;
+  h.get('tm-assignee').listeners.change();
+}
+
+test('assignment searches by name/account, requires selection, and sends only the chosen account', async () => {
+  const h = rendererHarness();
+  await h.context.openTaskAction('assign', assignableTask());
+  assert.equal(h.get('tm-hours').hidden, true);
+  assert.equal(h.get('tm-assign').hidden, false);
+  assert.equal(h.get('tm-ok').disabled, true);
+  assert.deepEqual(h.dialogStates, [true]);
+  await h.context.confirmTaskAction();
+  assert.equal(h.writes.length, 0);
+  assert.match(h.get('tm-err').textContent, /选择/);
+  for (const query of ['李明', 'NEXT']) {
+    h.get('tm-user-search').value = query;
+    h.get('tm-user-search').listeners.input();
+    assert.equal(h.get('tm-assignee').children.length, 1);
+    assert.equal(h.get('tm-assignee').children[0].value, 'next');
+  }
+  chooseAssignee(h, 'next');
+  assert.equal(h.get('tm-ok').disabled, false);
+  await h.context.confirmTaskAction();
+  assert.deepEqual(JSON.parse(JSON.stringify(h.writes)), [{ id: 178, action: 'assign', payload: { assignedTo: 'next' } }]);
+  assert.equal(h.get('toast').textContent, '指派成功');
+  assert.equal(h.get('task-modal').hidden, true);
+  assert.deepEqual(h.dialogStates, [true, false]);
+});
+
+test('assignment cancel, Escape and backdrop never write or leave the panel held', async () => {
+  for (const dismiss of [
+    h => h.get('tm-cancel').listeners.click(),
+    h => h.listeners.get('keydown')({ key: 'Escape' }),
+    h => h.get('task-modal').listeners.click({ target: h.get('task-modal') }),
+  ]) {
+    const h = rendererHarness();
+    await h.context.openTaskAction('assign', assignableTask());
+    chooseAssignee(h, 'next');
+    dismiss(h);
+    assert.equal(h.writes.length, 0);
+    assert.equal(h.get('task-modal').hidden, true);
+    assert.deepEqual(h.dialogStates, [true, false]);
+  }
+});
+
+test('late assignee responses cannot populate a newly opened dialog or a different connection', async () => {
+  for (const changeConnection of [false, true]) {
+    const h = rendererHarness();
+    const gate = deferred();
+    h.window.assigneeResult = () => gate.promise;
+    const first = h.context.openTaskAction('assign', assignableTask());
+    h.context.closeTaskAction();
+    h.window.assigneeResult = () => Promise.resolve({ ok: true, users: [{ account: 'fresh', realname: '新人员' }] });
+    vm.runInContext('renderAll = () => {}', h.context);
+    if (changeConnection) h.context.apply({ config: { baseUrl: 'https://another.invalid', account: 'new' }, state: { items: [] } });
+    else await h.context.openTaskAction('assign', assignableTask(179));
+    gate.resolve({ ok: true, users: [{ account: 'stale', realname: '旧人员' }] });
+    await first;
+    assert.equal(h.get('tm-assignee').children.some(option => option.value === 'stale'), false);
+    assert.equal(h.get('task-modal').hidden, changeConnection);
+  }
+});
+
+test('assignment duplicate confirmation and reopening while pending never repeat the write', async () => {
+  const h = rendererHarness();
+  const gate = deferred();
+  h.window.taskActionResult = () => gate.promise;
+  await h.context.openTaskAction('assign', assignableTask());
+  chooseAssignee(h, 'next');
+  const first = h.context.confirmTaskAction();
+  await h.context.confirmTaskAction();
+  h.context.closeTaskAction();
+  await h.context.openTaskAction('assign', assignableTask());
+  chooseAssignee(h, 'me');
+  assert.equal(h.get('tm-ok').disabled, true);
+  await h.context.confirmTaskAction();
+  gate.resolve({ ok: true, status: 'done' });
+  await first;
+  assert.equal(h.writes.length, 1);
+  assert.equal(h.get('task-modal').hidden, false, 'old completion cannot close the newer dialog');
+});
+
+test('assignment list failures never write and uncertain writes stay locked after selection changes', async () => {
+  const failed = rendererHarness();
+  failed.window.assigneeResult = () => Promise.resolve({ ok: false, error: '没有读取人员的权限' });
+  await failed.context.openTaskAction('assign', assignableTask());
+  await failed.context.confirmTaskAction();
+  assert.equal(failed.writes.length, 0);
+  assert.equal(failed.get('tm-ok').disabled, true);
+  assert.match(failed.get('tm-err').textContent, /选择/);
+  for (const outcome of ['rejected', 'unknown']) {
+    const h = rendererHarness();
+    h.window.taskActionResult = () => Promise.resolve({ ok: false, outcome, error: '权限或结果未确认' });
+    await h.context.openTaskAction('assign', assignableTask());
+    chooseAssignee(h, 'next');
+    await h.context.confirmTaskAction();
+    assert.equal(h.get('task-modal').hidden, false);
+    assert.equal(h.get('tm-ok').disabled, outcome === 'unknown');
+    chooseAssignee(h, 'me');
+    assert.equal(h.get('tm-ok').disabled, outcome === 'unknown');
+  }
+});
+
+test('assignment waits for native resize before loading actionable personnel', async () => {
+  const h = rendererHarness();
+  const resized = deferred();
+  let reads = 0;
+  h.window.zt.resize = () => resized.promise;
+  h.window.assigneeResult = () => { reads++; return Promise.resolve({ ok: true, users: [{ account: 'next', realname: '李明' }] }); };
+  const opened = h.context.openTaskAction('assign', assignableTask());
+  assert.equal(reads, 0, 'native window must finish resizing before assignees can become selectable');
+  assert.equal(h.get('tm-assignee').disabled, true);
+  resized.resolve();
+  await opened;
+  assert.equal(reads, 1);
+  assert.equal(h.get('tm-assignee').disabled, false);
 });

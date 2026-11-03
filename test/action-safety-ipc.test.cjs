@@ -499,3 +499,95 @@ test('omitted deletion flag preserves existing main task and bug operations', as
   assert.equal((await f.invoke('task:action', taskRequest('start'))).ok, true);
   assert.equal((await f.invoke('bug:action', bugRequest('resolve'))).ok, true);
 });
+
+function assignmentFixture(record = task({ status: 'done', assignedTo: 'other' })) {
+  const f = mainFixture([record], { allowConfigSave: true });
+  f.client.listUsers = async () => [{ account: 'Me', realname: '我' }, { account: 'next', realname: '下一位' }];
+  f.client.assignTask = async (id, payload) => {
+    f.writes.push({ method: 'assignTask', id, payload });
+    f.tasks.set(id, { ...f.tasks.get(id), assignedTo: { account: payload.assignedTo } });
+  };
+  return f;
+}
+const assignmentRequest = (assignedTo = 'Me') => ({ id: 10, action: 'assign', payload: { assignedTo } });
+
+test('reference and completed tasks allow assignment while status actions remain owner-only', async () => {
+  const f = assignmentFixture();
+  const detail = await f.invoke('task:detail', 10);
+  assert.equal(detail.task.canAssign, true);
+  assert.equal(detail.task.readOnly, true);
+  assert.equal(detail.task.assignedTo, 'other');
+  assert.equal((await f.invoke('task:action', taskRequest('close'))).outcome, 'rejected');
+  assert.equal((await f.invoke('task:assignees', 10)).users.length, 2);
+  assert.equal((await f.invoke('task:action', assignmentRequest())).outcome, 'verified');
+  assert.equal(f.tasks.get(10).status, 'done');
+  assert.equal(f.tasks.get(10).assignedTo.account, 'Me');
+  assert.equal(f.writes.length, 1);
+  assert.equal((await f.invoke('task:detail', 10)).task.readOnly, false);
+  assert.equal((await f.invoke('task:action', assignmentRequest('next'))).outcome, 'verified');
+  assert.equal((await f.invoke('task:detail', 10)).task.readOnly, true);
+});
+
+test('assignment rejects invalid sources, ids, users and unavailable records without writing', async () => {
+  const f = assignmentFixture();
+  for (const event of [null, {}, { ...f.event, senderFrame: {} }]) {
+    assert.equal((await f.invoke('task:assignees', 10, event)).ok, false);
+    assert.equal((await f.invoke('task:action', assignmentRequest(), event)).outcome, 'rejected');
+  }
+  for (const id of [0, '10', -1]) assert.equal((await f.invoke('task:assignees', id)).ok, false);
+  for (const payload of [{}, { assignedTo: 'unknown' }, { assignedTo: 'other' }, { assignedTo: 'Me', status: 'doing' }]) {
+    assert.equal((await f.invoke('task:action', { ...assignmentRequest(), payload })).outcome, 'rejected');
+  }
+  for (const record of [task({ deleted: true }), task({ status: 'unknown' }), { ...task(), id: 99 }]) {
+    f.tasks.set(10, record);
+    assert.equal((await f.invoke('task:assignees', 10)).ok, false);
+    assert.equal((await f.invoke('task:action', assignmentRequest())).outcome, 'rejected');
+  }
+  assert.equal(f.writes.length, 0);
+});
+
+test('assignment shares the write lock and blocks connection changes while awaiting dispatch', async () => {
+  const f = assignmentFixture();
+  const gate = deferred();
+  f.client.assignTask = async (id, payload) => {
+    f.writes.push({ method: 'assignTask', id, payload });
+    await gate.promise;
+    f.tasks.get(id).assignedTo = payload.assignedTo;
+  };
+  const first = f.invoke('task:action', assignmentRequest());
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await f.invoke('task:action', assignmentRequest())).outcome, 'pending');
+  assert.equal((await f.invoke('config:save', { account: 'another' })).ok, false);
+  assert.equal(f.writes.length, 1);
+  gate.resolve();
+  assert.equal((await first).outcome, 'verified');
+});
+
+test('unchanged assignee or failed readback stays unknown and never automatically retries', async () => {
+  for (const unreadable of [false, true]) {
+    const f = assignmentFixture();
+    f.client.assignTask = async (id, payload) => {
+      f.writes.push({ method: 'assignTask', id, payload });
+      if (unreadable) f.tasks.set(id, new Error('readback unavailable'));
+    };
+    const result = await f.invoke('task:action', assignmentRequest());
+    assert.equal(result.outcome, 'unknown');
+    assert.equal((await f.invoke('task:action', assignmentRequest())).outcome, 'unknown');
+    assert.equal(f.writes.length, 1);
+    f.tasks.set(10, task({ status: 'done', assignedTo: 'other' }));
+    assert.equal((await f.invoke('task:detail', 10)).task.writeStateKnown, true);
+    assert.equal((await f.invoke('task:action', assignmentRequest())).outcome, 'unknown');
+    assert.equal(f.writes.length, 2, 'only a fresh detail permits another explicit attempt');
+  }
+});
+
+test('stale assignee response is discarded after changing connection', async () => {
+  const f = assignmentFixture();
+  const gate = deferred();
+  f.client.listUsers = () => gate.promise;
+  const read = f.invoke('task:assignees', 10);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await f.invoke('config:save', { account: 'another' })).config.account, 'another');
+  gate.resolve([{ account: 'old-connection-user', realname: 'Old' }]);
+  assert.equal((await read).ok, false);
+});

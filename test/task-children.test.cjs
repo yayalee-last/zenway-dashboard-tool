@@ -171,7 +171,8 @@ test('actual renderer detail shows owner/status/hours of all kids and only confi
   await Promise.resolve(); await Promise.resolve();
   assert.equal(ui.DT.id, 11);
   assert.equal(ui.node('dt-foot').querySelectorAll('.primary').length, 0);
-  assert.match(body.textContent, /参考 · 只读/);
+  assert.match(body.textContent, /参考 · 仅可指派/);
+  assert.equal(body.querySelectorAll('.dt-assign').length, 1);
   assert.equal(ui.node('dt-foot').children.length, 1, 'browser remains available');
   ui.openTaskAction('close', { id: 11, name: 'Other', readOnly: true, isMine: false });
   assert.equal(ui.pending(), null);
@@ -210,7 +211,7 @@ test('expanded tree opens child details inside widget and repeats collapse/reope
   assert.equal(ui.node('list').hidden, true);
   assert.match(ui.node('dt-body').textContent, /Child 12/);
   assert.match(ui.node('dt-body').textContent, /Reference child detail/);
-  assert.match(ui.node('dt-body').textContent, /参考 · 只读/);
+  assert.match(ui.node('dt-body').textContent, /参考 · 仅可指派/);
   assert.equal(ui.node('dt-foot').querySelectorAll('.primary').length, 0);
   assert.equal(ui.opened.length, 1, 'child click must not open the browser');
   assert.deepEqual(f.reads, [10, 10, 12]);

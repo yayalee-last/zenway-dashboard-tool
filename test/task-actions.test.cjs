@@ -9,18 +9,22 @@ const vm = require('node:vm');
 const { ZentaoClient } = require('../electron/zentao');
 
 async function fixture(t, { assignedTo = 'fixture-user', detailStatus = 200, action = 'start' } = {}) {
-  const task = { id: 35, name: 'Task', status: action === 'close' ? 'done' : 'wait', assignedTo, execution: 8, left: 2 };
+  const task = { id: 35, name: 'Task', status: ['close', 'assign'].includes(action) ? 'done' : 'wait', assignedTo, execution: 8, left: 2 };
   const writes = [], reads = [];
   const json = (res, status, body) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
   const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api.php/v1/tokens') return json(res, 201, { token: 'fixture-token' });
-    if (req.method === 'POST') {
-      assert.equal(req.url, '/api.php/v1/tasks/35/' + action);
+    if (req.method === 'POST' || req.method === 'PUT') {
+      assert.equal(req.method, action === 'assign' ? 'PUT' : 'POST');
+      assert.equal(req.url, '/api.php/v1/tasks/35' + (action === 'assign' ? '' : '/' + action));
       let data = '';
       for await (const chunk of req) data += chunk;
       const body = JSON.parse(data);
       writes.push(body);
-      if (action === 'close') {
+      if (action === 'assign') {
+        // 22.6 api/v1/entries/task.php fills omitted edit fields from the old task.
+        task.assignedTo = body.assignedTo;
+      } else if (action === 'close') {
         // ZenTao 22.6 forwards comment only; absent/null leaves $_POST empty and skips close.
         if (Object.hasOwn(body, 'comment') && body.comment !== null) {
           task.status = 'closed';
@@ -37,6 +41,12 @@ async function fixture(t, { assignedTo = 'fixture-user', detailStatus = 200, act
     reads.push(req.url);
     if (req.url === '/api.php/v1/tasks/35') return json(res, detailStatus,
       detailStatus === 200 ? { ...task, assignedTo: task.assignedTo ? { account: task.assignedTo } : null } : { error: 'denied' });
+    if (req.url.startsWith('/api.php/v1/users?')) {
+      const page = Number(new URL(req.url, 'http://fixture.invalid').searchParams.get('page'));
+      return json(res, 200, { total: 2, users: page === 1
+        ? [{ account: 'fixture-user', realname: '我', email: 'private@example.invalid' }]
+        : [{ account: 'other-user', realname: '其他人' }] });
+    }
     if (req.url.startsWith('/api.php/v1/tasks?')) return json(res, 403, {});
     if (req.url.startsWith('/api.php/v1/executions?')) return json(res, 200, { executions: [{ id: 8, status: 'doing', project: 6 }] });
     if (req.url.startsWith('/api.php/v1/projects?')) return json(res, 200, { projects: [] });
@@ -126,4 +136,32 @@ test('closing a completed task sends an explicit comment and actually closes it 
   assert.equal(result.status, 'closed', 'HTTP 200 alone must not count as closing the task');
   assert.equal((await f.client.getTaskDetail(35)).status, 'closed');
   assert.deepEqual(f.writes, [{ closedReason: 'done', comment: '' }]);
+});
+
+test('assignment uses a minimal PUT and preserves completed status, work hours and title', async t => {
+  const f = await fixture(t, { action: 'assign' });
+  const before = { ...f.task };
+  await f.client.assignTask(35, { assignedTo: 'other-user' });
+  assert.deepEqual(f.writes, [{ assignedTo: 'other-user' }]);
+  assert.deepEqual(f.task, { ...before, assignedTo: 'other-user' });
+  assert.equal((await f.client.getTaskDetail(35)).assignedTo.account, 'other-user');
+  assert.equal((await f.client.fetchMyTasks()).items.length, 0);
+});
+
+test('assignee list follows server pagination and exposes only account and realname', async t => {
+  const f = await fixture(t);
+  assert.deepEqual(await f.client.listUsers(), [
+    { account: 'fixture-user', realname: '我' }, { account: 'other-user', realname: '其他人' },
+  ]);
+  assert.deepEqual(f.reads, ['/api.php/v1/users?limit=200&page=1', '/api.php/v1/users?limit=200&page=2']);
+});
+
+test('invalid assignment inputs are rejected before authentication or network', async () => {
+  const client = new ZentaoClient({});
+  client.ensureToken = () => assert.fail('invalid assignment must not authenticate');
+  for (const payload of [{}, { assignedTo: '' }, { assignedTo: null }, { assignedTo: 'bad user' },
+    { assignedTo: 'next', status: 'doing' }, { assignedTo: 'a'.repeat(101) }]) {
+    await assert.rejects(client.assignTask(35, payload));
+  }
+  await assert.rejects(client.assignTask('../35', { assignedTo: 'next' }));
 });

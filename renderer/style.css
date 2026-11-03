@@ -995,6 +995,24 @@ input::placeholder {
   color: var(--text);
 }
 
+.dt-grid .dt-assign {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dt-assign:hover { text-decoration: underline; }
+
+#tm-assign .field { margin: 10px 0; }
+#tm-assignee { height: 156px; padding: 4px; margin-bottom: 8px; }
+#tm-assignee option { padding: 5px 7px; }
+
 .dt-h {
   display: flex;
   align-items: center;

@@ -193,10 +193,10 @@ class ZentaoClient {
     } catch (e) {
       const hint = String(this.cfg.baseUrl).includes('your-zentao-host') ? '（还是占位地址，先填真实禅道地址）' : '';
       throw new ZentaoError(`连不上禅道${hint}（连接失败、超时或重定向已被阻止）`, 0, null,
-        method === 'POST' && !path.endsWith('/tokens') ? 'unknown' : 'rejected');
+        method !== 'GET' && !path.endsWith('/tokens') ? 'unknown' : 'rejected');
     }
     if (res.status >= 300 && res.status < 400) throw new ZentaoError('禅道重定向已被阻止，请配置最终部署地址', res.status, null,
-      method === 'POST' && !path.endsWith('/tokens') ? 'unknown' : 'rejected');
+      method !== 'GET' && !path.endsWith('/tokens') ? 'unknown' : 'rejected');
     const text = await res.text();
     let body = null;
     try {
@@ -246,13 +246,13 @@ class ZentaoClient {
     return r.body || {};
   }
 
-  /** 写操作：POST 到禅道动作端点 */
-  async postJSON(path, body = {}) {
-    try { assertRestOperation('POST', '/api.php/v1' + path); } catch (error) { throw new ZentaoError(error.message, 0); }
+  /** 写操作共用结果未知处理；不自动重发。 */
+  async postJSON(path, body = {}, method = 'POST') {
+    try { assertRestOperation(method, '/api.php/v1' + path); } catch (error) { throw new ZentaoError(error.message, 0); }
     await this.ensureToken();
     // A lost response/login page does not prove that a write did not execute.
     // Never transparently replay an action after reauthentication.
-    const r = await this._raw('POST', '/api.php/v1' + path, { json: body });
+    const r = await this._raw(method, '/api.php/v1' + path, { json: body });
     if (r.html) throw new ZentaoError('禅道返回了登录页；操作结果未确认，请先在网页核对，勿直接重试', 401, null, 'unknown');
     if (r.status !== 200 && r.status !== 201) {
       const detail = pickError(r.body, [this.cfg.password, this.token]);
@@ -481,6 +481,27 @@ class ZentaoClient {
     });
     chunks.flat().forEach(([t, en, pn]) => push(t, en, pn));
     return { items, strategy, execCount: active.length };
+  }
+
+  /** REST v1 默认返回内部人员，仅向界面提供账号和姓名。 */
+  async listUsers() {
+    const users = [];
+    for (let page = 1; ; page++) {
+      const r = await this.getJSON(`/users?limit=200&page=${page}`);
+      if (!Array.isArray(r.users) || !Number.isSafeInteger(r.total) || r.total < 0) throw new ZentaoError('人员列表格式无效', 0);
+      for (const user of r.users) {
+        if (typeof user?.account !== 'string' || !user.account) throw new ZentaoError('人员账号无效', 0);
+        users.push({ account: user.account, realname: typeof user.realname === 'string' ? user.realname : user.account });
+      }
+      if (users.length >= r.total) return users;
+      if (!r.users.length) throw new ZentaoError('人员列表不完整，请重新打开指派窗口', 0);
+    }
+  }
+
+  async assignTask(id, payload) {
+    id = objectId(id, '任务');
+    const { assignedTo } = validatedPayload('task', 'assign', payload);
+    return this.postJSON(`/tasks/${id}`, { assignedTo }, 'PUT');
   }
 
   /** 任务详情：含 children 子任务、operateMenu 当前可用操作 */

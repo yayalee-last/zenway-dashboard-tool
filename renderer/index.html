@@ -209,6 +209,15 @@
               <input id="tm-left" type="number" step="0.5" min="0" />
             </label>
           </div>
+          <div id="tm-assign" hidden>
+            <p class="hint" id="tm-assigned-current"></p>
+            <label class="field">
+              <span>搜索人员（姓名 / 账号）</span>
+              <input id="tm-user-search" type="text" placeholder="输入姓名或账号" autocomplete="off" spellcheck="false" />
+            </label>
+            <select id="tm-assignee" size="6" aria-label="指派给" disabled></select>
+            <p class="hint" id="tm-assign-note" aria-live="polite"></p>
+          </div>
           <p class="tm-close-note" id="tm-close-note" hidden>确认关闭这条已完成任务？关闭后将标记为「已关闭」。</p>
           <div class="test-result fail" id="tm-err" hidden></div>
           <div class="panel-foot">

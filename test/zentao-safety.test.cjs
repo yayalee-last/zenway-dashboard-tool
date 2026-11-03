@@ -22,6 +22,8 @@ test('request safety primitives admit only explicit REST operation shapes', () =
   assert.doesNotThrow(() => safety.assertRestOperation('POST', '/api.php/v1/tokens'));
   assert.doesNotThrow(() => safety.assertRestOperation('POST', '/api.php/v1/tasks/17/start'));
   assert.doesNotThrow(() => safety.assertRestOperation('POST', '/api.php/v1/bugs/21/resolve'));
+  assert.doesNotThrow(() => safety.assertRestOperation('PUT', '/api.php/v1/tasks/17'));
+  assert.doesNotThrow(() => safety.assertRestOperation('GET', '/api.php/v1/users?limit=200&page=1'));
 
   for (const [method, path] of [
     ['DELETE', '/api.php/v1/tasks/17'],
@@ -36,6 +38,11 @@ test('request safety primitives admit only explicit REST operation shapes', () =
     ['GET', '/api.php/v1/tasks/17/close'],
     ['POST', '/api.php/v1/tasks/17/delete'],
     ['POST', '/api.php/v1/files/17'],
+    ['PUT', '/api.php/v1/bugs/17'],
+    ['PUT', '/api.php/v1/tasks/17/close'],
+    ['PUT', '/api.php/v1/tasks/17?delete=1'],
+    ['GET', '/api.php/v1/users?full=1'],
+    ['GET', '/api.php/v1/users?limit=0'],
   ]) {
     assert.throws(() => safety.assertRestOperation(method, path), `${method} ${path} should be rejected`);
   }
@@ -77,6 +84,7 @@ test('malformed object ids fail before authentication or any request', async () 
       id => c.getTaskDetail(id), id => c.getBugDetail(id),
       id => c.resolveBug(id), id => c.closeBug(id),
       id => c.startTask(id, { consumed: 1 }), id => c.finishTask(id), id => c.closeTask(id),
+      id => c.assignTask(id, { assignedTo: 'next' }),
       id => c.fetchFileDataUrl(id), id => c.downloadFile(id, '/tmp/unused-test-destination'),
     ];
     for (const id of bad) {
@@ -203,6 +211,7 @@ test('file image reads reauthenticate at most once on a single 401', async () =>
 });
 
 test('uncertain write outcomes are never retried automatically', async () => {
+  for (const assign of [false, true]) {
   for (const failure of [
     async () => new Response('unauthorized', { status: 401 }),
     async () => new Response('<html><title>Login</title></html>', { status: 200, headers: { 'content-type': 'text/html' } }),
@@ -216,10 +225,11 @@ test('uncertain write outcomes are never retried automatically', async () => {
     }, async () => {
       const c = client();
       c.ensureToken = async () => { authCalls++; return 'fixture-token'; };
-      await assert.rejects(c.postJSON('/tasks/17/close', { closedReason: 'done' }));
+      await assert.rejects(assign ? c.assignTask(17, { assignedTo: 'next' }) : c.postJSON('/tasks/17/close', { closedReason: 'done' }), error => error.outcome === 'unknown');
     });
     assert.equal(fetchCalls, 1, 'only the write request should be attempted');
     assert.equal(authCalls, 1, 'authentication should not be forced again after an uncertain write');
+  }
   }
 });
 

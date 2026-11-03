@@ -4,6 +4,12 @@
 
 ## 未发布
 
+## [0.3.18](https://github.com/yayalee-last/zenway-dashboard-tool/compare/v0.3.17...v0.3.18) — 2026-11-03
+
+### 新增
+
+- 任务详情支持点击「指派给」快速指派，按姓名或账号搜索人员，确认后提交；已完成及参考任务也可使用，保留参考任务的开始/完成/关闭限制。指派后回查负责人和状态，刷新详情及个人待办，复用防重复提交与结果未确认保护。
+
 ## [0.3.17](https://github.com/yayalee-last/zenway-dashboard-tool/compare/v0.3.16...v0.3.17) — 2026-11-02
 
 ### 新增

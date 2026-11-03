@@ -404,27 +404,39 @@ function bugUrl(id) {
 }
 
 function openTaskAction(action, it) {
-  if (it.readOnly === true || it.isMine === false) return toast('参考任务只读，请在禅道网页处理', 'bad');
+  if (action !== 'assign' && (it.readOnly === true || it.isMine === false)) return toast('参考任务只读，请在禅道网页处理', 'bad');
+  if (action === 'assign' && it.canAssign !== true) return toast('任务状态不可确认，请重新打开详情', 'bad');
   const key = actionKey('task', it.id);
-  pending = { action, it, token: ++taskDialogSeq };
+  pending = { action, it, token: ++taskDialogSeq, users: [], usersLoaded: false, assignedTo: '' };
   const locked = taskWrites.has(key);
   const uncertain = uncertainTaskWrites.has(key);
   const finishing = action === 'finish';
   const closing = action === 'close';
-  $('tm-title').textContent = closing ? '关闭任务' : finishing ? '完成任务' : '开始任务';
-  $('tm-hours').hidden = closing;
+  const assigning = action === 'assign';
+  $('tm-title').textContent = assigning ? '快速指派' : closing ? '关闭任务' : finishing ? '完成任务' : '开始任务';
+  $('tm-hours').hidden = closing || assigning;
+  $('tm-assign').hidden = !assigning;
   $('tm-close-note').hidden = !closing;
   $('tm-task').textContent = it.name;
   $('tm-consumed-label').textContent = finishing ? '本次消耗（小时）' : '预计消耗（小时）';
   $('tm-consumed').value = finishing ? String(it.left || 0) : '0.5';
   $('tm-left').value = finishing ? '0' : String(it.left || 72);
   $('tm-err').hidden = true;
-  $('tm-ok').disabled = locked || uncertain;
-  $('tm-ok').textContent = locked ? '请求处理中…' : '确认';
+  $('tm-ok').disabled = locked || uncertain || assigning;
+  $('tm-ok').textContent = locked ? '请求处理中…' : assigning ? '确认指派' : '确认';
   if (locked) setActionError('tm-err', '该任务操作仍在处理中，请稍后重新打开操作。', false);
   else if (uncertain) setActionError('tm-err', '操作结果未能确认。请先在禅道网页检查记录，再重新打开任务详情后操作；不会自动重试。', true);
   $('task-modal').hidden = false;
   window.zt.setTaskDialogOpen(true);
+  if (assigning) {
+    $('tm-assigned-current').textContent = `当前：${it.assignedRealname || it.assignedTo || '未指派'}`;
+    $('tm-user-search').value = '';
+    $('tm-assignee').replaceChildren();
+    $('tm-assignee').disabled = true;
+    $('tm-assign-note').textContent = '正在读取人员…';
+    $('tm-user-search').focus();
+    return loadTaskAssignees(pending);
+  }
   if (closing) {
     // outerHeight 与原生窗口同为 DIP；页面缩放后的 innerHeight 会偏小。
     // 保留较高的列表/详情尺寸，避免原点击位置落到窗口外触发悬浮收起。
@@ -434,6 +446,52 @@ function openTaskAction(action, it) {
   }
   $('tm-consumed').focus();
   $('tm-consumed').select();
+}
+
+async function loadTaskAssignees(session) {
+  let result;
+  try {
+    await window.zt.resize(Math.max(window.outerHeight, 600));
+    if (pending !== session) return;
+    result = await window.zt.taskAssignees(session.it.id);
+  }
+  catch (error) { result = { ok: false, error: error.message || '读取人员失败' }; }
+  if (pending !== session) return;
+  if (!result.ok) {
+    $('tm-assign-note').textContent = '请关闭后重新打开指派窗口重试';
+    setActionError('tm-err', result.error || '读取人员失败');
+    return;
+  }
+  session.users = result.users;
+  session.usersLoaded = true;
+  renderTaskAssignees();
+}
+
+function renderTaskAssignees() {
+  if (!pending || pending.action !== 'assign') return;
+  const session = pending;
+  const query = $('tm-user-search').value.trim().toLowerCase();
+  const users = session.users.filter(user => `${user.realname} ${user.account}`.toLowerCase().includes(query));
+  const select = $('tm-assignee');
+  select.replaceChildren();
+  for (const user of users) {
+    const option = el('option', null, `${user.realname || user.account}（${user.account}）${user.account === session.it.assignedTo ? ' · 当前' : ''}`);
+    option.value = user.account;
+    option.disabled = user.account === session.it.assignedTo;
+    select.append(option);
+  }
+  select.disabled = !session.usersLoaded;
+  select.value = '';
+  session.assignedTo = '';
+  $('tm-ok').disabled = true;
+  $('tm-assign-note').textContent = !session.usersLoaded ? '正在读取人员…' : users.length ? '选择人员后点击「确认指派」' : '没有匹配的人员';
+}
+
+function selectTaskAssignee() {
+  if (!pending || pending.action !== 'assign') return;
+  pending.assignedTo = $('tm-assignee').value;
+  const key = actionKey('task', pending.it.id);
+  $('tm-ok').disabled = !pending.assignedTo || taskWrites.has(key) || uncertainTaskWrites.has(key);
 }
 
 function closeTaskAction() {
@@ -449,6 +507,9 @@ async function confirmTaskAction() {
   const { action, it } = session;
   const key = actionKey('task', it.id);
   if (taskWrites.has(key) || uncertainTaskWrites.has(key)) return;
+  if (action === 'assign' && (!session.usersLoaded || !session.users.some(user => user.account === session.assignedTo && user.account !== it.assignedTo))) {
+    return setActionError('tm-err', '请先选择指派人员');
+  }
   const consumed = Number($('tm-consumed').value) || 0;
   const left = Number($('tm-left').value) || 0;
   const btn = $('tm-ok');
@@ -456,7 +517,7 @@ async function confirmTaskAction() {
   btn.textContent = '提交中…';
 
   taskWrites.set(key, session.token);
-  const payload = action === 'close' ? { closedReason: 'done' }
+  const payload = action === 'assign' ? { assignedTo: session.assignedTo } : action === 'close' ? { closedReason: 'done' }
     : action === 'finish' ? { currentConsumed: consumed, left } : { consumed, left };
   let r;
   try { r = await window.zt.taskAction({ id: it.id, action, payload }); }
@@ -468,7 +529,7 @@ async function confirmTaskAction() {
     if (unknown) uncertainTaskWrites.set(key, session.token);
     if (current) {
       btn.disabled = unknown;
-      btn.textContent = '确认';
+      btn.textContent = action === 'assign' ? '确认指派' : '确认';
       setActionError('tm-err', unknown
         ? `操作结果未知：${r.error || '请求未能确认'}。请先在禅道网页检查记录，再重新打开任务详情后操作；不会自动重试。`
         : (r?.error || '操作失败，请重试。'), unknown);
@@ -478,7 +539,7 @@ async function confirmTaskAction() {
 
   if (!current) return;
   closeTaskAction();
-  toast(action === 'close' ? '任务已关闭' : action === 'finish' || r.status === 'done' ? '已完成' : '已开始', 'ok');
+  toast(action === 'assign' ? '指派成功' : action === 'close' ? '任务已关闭' : action === 'finish' || r.status === 'done' ? '已完成' : '已开始', 'ok');
   if (DT.open && DT.kind === 'task' && DT.id === it.id) loadDetail(DT.id);
 }
 
@@ -719,7 +780,7 @@ function renderDetail(t) {
 
   const badges = el('div', 'dt-badges');
   badges.append(el('span', `tag ${st}`, STATUS_LABEL[st] || t.status || ''));
-  if (t.readOnly !== false || t.isMine !== true) badges.append(el('span', 'tag reference', '参考 · 只读'));
+  if (t.readOnly !== false || t.isMine !== true) badges.append(el('span', 'tag reference', t.canAssign === true ? '参考 · 仅可指派' : '参考 · 只读'));
 
   const pri = el('span', 'pri-dot');
   pri.dataset.pri = String(t.pri || 0);
@@ -731,18 +792,25 @@ function renderDetail(t) {
   body.append(badges);
 
   const grid = el('div', 'dt-grid');
-  const kv = (k, v, strong) => {
+  const kv = (k, v, strong, onClick) => {
     if (v === undefined || v === null) return;
     const s = String(v).trim();
     if (!s || s === '-' || s === '/') return;
     const c = el('div', 'kv');
     c.append(el('div', 'k', k));
-    c.append(el('div', strong ? 'v strong' : 'v', s));
+    const value = el(onClick ? 'button' : 'div', strong ? 'v strong' : onClick ? 'v dt-assign' : 'v', onClick ? `${s} ›` : s);
+    if (onClick) {
+      value.type = 'button';
+      value.title = '快速指派';
+      value.setAttribute('aria-label', `快速指派，当前${s}`);
+      value.addEventListener('click', onClick);
+    }
+    c.append(value);
     grid.append(c);
   };
   kv('所属迭代', t.executionName);
   kv('模块', t.moduleTitle);
-  kv('指派给', t.assignedRealname || '负责人未知');
+  kv('指派给', t.assignedRealname || '负责人未知', false, t.canAssign === true ? () => openTaskAction('assign', t) : null);
   kv('工时 预计/已耗/剩', `${t.estimate || 0} / ${t.consumed || 0} / ${t.left || 0} h`, true);
   kv('截止', t.deadline || '未设置');
   kv('创建', `${t.openedBy || ''}${t.openedDate ? ` · ${fmtDT(t.openedDate)}` : ''}`);
@@ -1315,6 +1383,8 @@ function bind() {
   $('tm-close').addEventListener('click', closeTaskAction);
   $('tm-cancel').addEventListener('click', closeTaskAction);
   $('tm-ok').addEventListener('click', confirmTaskAction);
+  $('tm-user-search').addEventListener('input', renderTaskAssignees);
+  $('tm-assignee').addEventListener('change', selectTaskAssignee);
   $('task-modal').addEventListener('click', (e) => {
     if (e.target === $('task-modal')) closeTaskAction();
   });
