@@ -110,6 +110,17 @@ test('explicit floating cleanup cancels queued work and is safe to repeat', () =
   assert.deepEqual(h.moves, []);
 });
 
+for (const target of ['ball', 'panel', 'controller']) {
+  test('queued preview IPC is ignored after destroying the ' + target, () => {
+    const h = floatingHarness();
+    const queuedClick = h.preview.webContents.listeners('ipc-message')[0];
+    if (target === 'controller') h.floating.destroy();
+    else h[target].destroy();
+    assert.doesNotThrow(() => queuedClick(null, 'preview:open', { id: 1, kind: 'task' }));
+    assert.deepEqual(h.moves, []);
+  });
+}
+
 test('task dialog suspends queued collapse until dismissal', () => {
   const h = floatingHarness();
   h.floating.setTaskDialogOpen(true);

@@ -751,7 +751,7 @@ function renderAttachments(body, files, kind, id) {
     error.setAttribute('role', 'alert');
     line.addEventListener('click', async () => {
       line.disabled = true;
-      label.textContent = '下载中…';
+      label.textContent = '打开中…';
       error.hidden = true;
       try {
         const result = await window.zt.openAttachment({ kind, id, fileId: f.id });

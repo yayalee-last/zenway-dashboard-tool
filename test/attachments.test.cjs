@@ -21,7 +21,7 @@ async function fixture(t, { download, openPath, detailStatus = 200, title = '附
   const requests = [], opened = [];
   const detail = { id: 119, name: 'Task', title: 'Bug', status: 'doing',
     desc: '<p>description</p>', steps: '<p>steps</p>',
-    files: { 180: { id: 180, title, extension: 'txt', pathname: '../../server-path', url: 'https://example.invalid/download' } } };
+    files: { 180: { id: 180, title, extension: 'txt', size: largeFile.length, addedDate: '2026-11-09 10:00:00', pathname: '../../server-path', url: 'https://example.invalid/download' } } };
   let tokenCount = 0;
   const server = http.createServer((req, res) => {
     requests.push({ url: req.url, token: req.headers.token, cookie: req.headers.cookie });
@@ -52,14 +52,22 @@ async function fixture(t, { download, openPath, detailStatus = 200, title = '附
       openExternal() { assert.fail('attachments must not use the browser'); } },
   };
   const source = path.resolve(__dirname, '../electron/main.js'), realRequire = createRequire(source);
-  const context = vm.createContext({
-    require: name => name === 'electron' ? electron : realRequire(name),
-    module: { exports: {} }, __dirname: path.dirname(source), process: { argv: [], platform: process.platform },
-    Buffer, console, setTimeout, clearTimeout, setInterval, clearInterval,
-  });
-  vm.runInContext(fs.readFileSync(source, 'utf8') + '\nmodule.exports = { setup(c) { client = c; config = c.cfg; wireIpc(); } };', context, { filename: source });
-  context.module.exports.setup(client);
+  const load = () => {
+    const context = vm.createContext({
+      require: name => name === 'electron' ? electron : realRequire(name),
+      module: { exports: {} }, __dirname: path.dirname(source), process: { argv: [], platform: process.platform },
+      Buffer, console, setTimeout, clearTimeout, setInterval, clearInterval,
+    });
+    vm.runInContext(fs.readFileSync(source, 'utf8') + '\nmodule.exports = { setup(c) { client = c; config = c.cfg; wireIpc(); }, switchClient(c) { client = c; config = c.cfg; connectionRevision++; }, currentClient() { return client; } };', context, { filename: source });
+    context.module.exports.setup(client);
+    return context.module.exports;
+  };
+  let controls = load();
   return { client, directory, detail, requests, opened, handlers,
+    restart: () => { controls = load(); },
+    switchClient: c => controls.switchClient(c),
+    currentClient: () => controls.currentClient(),
+    setDetailStatus: status => { detailStatus = status; },
     invoke: (name, value) => handlers.get(name)(null, value),
     open: (kind = 'task', extra = {}) => handlers.get('attachment:open')(null, { kind, id: 119, fileId: 180, ...extra }) };
 }
@@ -90,6 +98,177 @@ test('both attachment kinds download over 4 MiB with Token and open complete loc
     assert.equal(request.cookie, undefined);
   }
   assert.equal(await f.client.fetchFileDataUrl(181), 'data:image/png;base64,' + png.toString('base64'));
+});
+
+test('unchanged attachments reuse a complete local file after checking detail again', async t => {
+  const f = await fixture(t);
+  for (const kind of ['task', 'bug']) {
+    assert.equal((await f.open(kind)).ok, true);
+    const first = f.opened.at(-1);
+    assert.equal((await f.open(kind)).ok, true);
+    assert.equal(f.opened.at(-1), first);
+    assert.deepEqual(fs.readFileSync(first), largeFile);
+    assert.equal(f.requests.filter(r => r.url === '/api.php/v1/' + (kind === 'task' ? 'tasks' : 'bugs') + '/119').length, 2);
+  }
+  assert.equal(f.requests.filter(r => r.url === '/api.php/v1/files/180').length, 2);
+});
+test('cache survives a main-process reload and remains isolated by account and server', async t => {
+  const f = await fixture(t);
+  assert.equal((await f.open()).ok, true);
+  const first = f.opened.at(-1);
+  f.restart();
+  assert.equal((await f.open()).ok, true);
+  assert.equal(f.opened.at(-1), first);
+  assert.equal(f.requests.filter(r => r.url.includes('/files/')).length, 1);
+
+  const otherAccount = new ZentaoClient({ ...f.client.cfg, account: 'another-user' });
+  f.switchClient(otherAccount);
+  assert.equal((await f.open()).ok, true);
+  assert.notEqual(f.opened.at(-1), first);
+  f.switchClient(new ZentaoClient({ ...f.client.cfg, baseUrl: f.client.cfg.baseUrl + '/another' }));
+  // Use the same controlled server responses with a distinct connection identity.
+  const otherServer = f.currentClient();
+  otherServer.getTaskDetail = () => f.client.getTaskDetail(119);
+  otherServer.downloadFile = (id, destination) => f.client.downloadFile(id, destination);
+  assert.equal((await f.open()).ok, true);
+  assert.notEqual(f.opened.at(-1), first);
+  assert.notEqual(f.opened.at(-1), f.opened.at(-2));
+  assert.equal(f.requests.filter(r => r.url.includes('/files/')).length, 3);
+});
+
+test('changed remote metadata downloads a new version without overwriting an opened file', async t => {
+  const f = await fixture(t);
+  assert.equal((await f.open()).ok, true);
+  const paths = [f.opened.at(-1)];
+  for (const [field, value] of [['title', 'renamed.txt'], ['size', largeFile.length + 1],
+    ['pathname', 'new-storage.txt'], ['addedDate', '2026-11-09 11:00:00']]) {
+    f.detail.files[180][field] = value;
+    assert.equal((await f.open()).ok, true);
+    paths.push(f.opened.at(-1));
+  }
+  assert.equal(new Set(paths).size, paths.length);
+  assert.equal(f.requests.filter(r => r.url.includes('/files/')).length, paths.length);
+  for (const file of paths) assert.deepEqual(fs.readFileSync(file), largeFile);
+});
+
+test('missing or truncated local copies are downloaded again', async t => {
+  const f = await fixture(t);
+  assert.equal((await f.open()).ok, true);
+  const first = f.opened.at(-1);
+  fs.unlinkSync(first);
+  assert.equal((await f.open()).ok, true);
+  assert.equal(f.opened.at(-1), first);
+  fs.writeFileSync(first, 'incomplete');
+  assert.equal((await f.open()).ok, true);
+  assert.deepEqual(fs.readFileSync(first), largeFile);
+  assert.equal(f.requests.filter(r => r.url.includes('/files/')).length, 3);
+});
+
+test('cached files cannot bypass revoked detail permission or removed attachment membership', async t => {
+  const f = await fixture(t);
+  assert.equal((await f.open()).ok, true);
+  f.setDetailStatus(403);
+  assert.match((await f.open()).error, /无权限/);
+  f.setDetailStatus(200);
+  f.detail.files = [];
+  assert.match((await f.open()).error, /已无该附件/);
+  assert.equal(f.opened.length, 1);
+  assert.equal(f.requests.filter(r => r.url.includes('/files/')).length, 1);
+});
+
+test('concurrent attachment opens share one download and never open a partial file', async t => {
+  let releaseDownload, started;
+  const start = new Promise(resolve => { started = resolve; });
+  const f = await fixture(t, { download(req, res) {
+    res.writeHead(200, { 'Content-Disposition': 'attachment; filename="a.txt"' });
+    res.write(largeFile.subarray(0, 100));
+    releaseDownload = () => res.end(largeFile.subarray(100));
+    started();
+  } });
+  const first = f.open();
+  await start;
+  const second = f.open();
+  // Both detail reads must finish while the file is still incomplete.
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.opened.length, 0);
+  releaseDownload();
+  const results = await Promise.all([first, second]);
+  assert(results.every(r => r.ok));
+  assert.equal(f.requests.filter(r => r.url.includes('/files/')).length, 1);
+  assert.equal(new Set(f.opened).size, 1);
+  assert.deepEqual(fs.readFileSync(f.opened[0]), largeFile);
+});
+
+test('connection changes during download do not open or retain the old connection file', async t => {
+  let releaseDownload, started;
+  const start = new Promise(resolve => { started = resolve; });
+  const f = await fixture(t, { download(req, res) {
+    res.writeHead(200, { 'Content-Disposition': 'attachment; filename="a.txt"' });
+    res.write(largeFile.subarray(0, 100));
+    releaseDownload = () => res.end(largeFile.subarray(100));
+    started();
+  } });
+  const opening = f.open();
+  await start;
+  f.switchClient(new ZentaoClient({ ...f.client.cfg, account: 'another-user' }));
+  releaseDownload();
+  assert.match((await opening).error, /连接配置已变化/);
+  assert.equal(f.opened.length, 0);
+  assert.deepEqual(fs.readdirSync(f.directory), []);
+});
+
+test('credential changes cannot race two downloads into the same persistent cache', async t => {
+  let releaseDownload, started, detailRead;
+  const start = new Promise(resolve => { started = resolve; });
+  const read = new Promise(resolve => { detailRead = resolve; });
+  const f = await fixture(t, { download(req, res) {
+    res.writeHead(200, { 'Content-Disposition': 'attachment; filename="a.txt"' });
+    res.write(largeFile.subarray(0, 100));
+    releaseDownload = () => res.end(largeFile.subarray(100));
+    started();
+  } });
+  const first = f.open();
+  await start;
+  const next = new ZentaoClient({ ...f.client.cfg, password: 'changed-fixture-password' });
+  const getDetail = next.getTaskDetail.bind(next);
+  next.getTaskDetail = async id => { const result = await getDetail(id); detailRead(); return result; };
+  f.switchClient(next);
+  const second = f.open();
+  await read;
+  await new Promise(resolve => setImmediate(resolve));
+  releaseDownload();
+  for (const result of await Promise.all([first, second])) assert.match(result.error, /连接配置已变化/);
+  assert.equal(f.requests.filter(r => r.url.includes('/files/')).length, 1);
+  assert.equal(f.opened.length, 0);
+  assert.deepEqual(fs.readdirSync(f.directory), []);
+});
+
+test('a cached local-open error preserves the existing file for retry without downloading', async t => {
+  let fail = false;
+  const f = await fixture(t, { openPath: () => fail ? 'No associated application' : '' });
+  assert.equal((await f.open()).ok, true);
+  const first = f.opened.at(-1);
+  fail = true;
+  assert.match((await f.open()).error, /本地打开附件失败/);
+  assert.deepEqual(fs.readFileSync(first), largeFile);
+  fail = false;
+  assert.equal((await f.open()).ok, true);
+  assert.equal(f.opened.at(-1), first);
+  assert.equal(f.requests.filter(r => r.url.includes('/files/')).length, 1);
+});
+
+test('a failed download can be retried and does not create a reusable partial cache', async t => {
+  let attempts = 0;
+  const f = await fixture(t, { download(req, res) {
+    if (++attempts === 1) { res.writeHead(500); res.end('failed'); }
+    else { res.writeHead(200, { 'Content-Disposition': 'attachment; filename="a.txt"' }); res.end(largeFile); }
+  } });
+  assert.equal((await f.open()).ok, false);
+  assert.deepEqual(fs.readdirSync(f.directory), []);
+  assert.equal((await f.open()).ok, true);
+  assert.equal((await f.open()).ok, true);
+  assert.equal(attempts, 2);
+  assert.deepEqual(fs.readFileSync(f.opened.at(-1)), largeFile);
 });
 
 test('expired Token is renewed once for file downloads', async t => {
@@ -171,8 +350,11 @@ test('external names stay inside unique directories and ignore renderer paths', 
     assert(!/[<>:"/\\|?*]/.test(path.basename(file)));
     assert(!/^(con|nul)(\.|$)/i.test(path.basename(file)));
   }
-  await Promise.all([f.open(), f.open()]);
   assert.equal(new Set(f.opened).size, f.opened.length);
+  const first = f.opened.at(-1);
+  await Promise.all([f.open(), f.open()]);
+  assert.equal(f.opened.at(-1), first);
+  assert.equal(new Set(f.opened).size, 7);
 });
 
 test('real Electron renders both attachment lists and routes clicks and errors through preload', { timeout: 20000 }, async t => {

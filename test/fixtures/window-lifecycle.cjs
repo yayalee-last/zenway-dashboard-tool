@@ -358,16 +358,20 @@ app.whenReady().then(async () => {
     assert.equal(win.isVisible(), false, 'preview must not expand the full panel');
     assert(preview.getBounds().x + preview.getBounds().width < ball.getBounds().x, 'left preview must remain left of the ball');
     fs.writeFileSync(path.join(artifacts, 'preview-left.png'), (await preview.capturePage()).toPNG());
-    const clickPreviewRow = async index => {
+    const clickPreviewRow = async (index, id) => {
       const point = await preview.webContents.executeJavaScript(
         "(function () { const row = document.querySelectorAll('#preview-list li')[" + index + "]; const rect = row.getBoundingClientRect(); return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) }; })()");
       preview.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
       preview.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
-      await pause(150);
+      const until = Date.now() + 5000;
+      while (!win.isVisible() || await win.webContents.executeJavaScript('DT.id') !== id) {
+        if (Date.now() > until) throw new Error('Preview click did not open the selected detail');
+        await pause(20);
+      }
     };
     for (const item of [{ index: 0, id: 10231, kind: 'task' }, { index: 1, id: 1034, kind: 'bug' }]) {
       if (item.kind === 'bug') await win.webContents.executeJavaScript('openSettings()');
-      await clickPreviewRow(item.index);
+      await clickPreviewRow(item.index, item.id);
       assert.equal(win.isVisible(), true, 'clicking a preview row must open the full panel');
       assert.equal(preview.isVisible(), false);
       assert.equal(await win.webContents.executeJavaScript('DT.id'), item.id, 'preview clicks must open the selected item');
@@ -406,7 +410,7 @@ app.whenReady().then(async () => {
     assert.equal(ball.getBounds().x, area.x + area.width - originalBall.width, 'preview must not force the ball away from the right edge');
     assert(rightPreviewBounds.x + rightPreviewBounds.width < ball.getBounds().x, 'right-side preference must flip left when the right edge has no room');
     assert(rightPreviewBounds.y + rightPreviewBounds.height <= area.y + area.height, 'preview must stay above the taskbar');
-    await clickPreviewRow(2);
+    await clickPreviewRow(2, 10188);
     assert.equal(win.isVisible(), true, 'auto-flipped preview must remain clickable');
     assert.equal(await win.webContents.executeJavaScript('DT.id'), 10188);
     enterPanel();

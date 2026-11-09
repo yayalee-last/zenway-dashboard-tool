@@ -2,6 +2,7 @@
 
 const path = require('node:path');
 const fs = require('node:fs');
+const { createHash } = require('node:crypto');
 const { app, BrowserWindow, Tray, Menu, ipcMain, shell, clipboard, nativeImage, screen } = require('electron');
 const { ZentaoClient, ZentaoError, normalizeBaseUrl } = require('./zentao');
 const { Updater } = require('./updater');
@@ -683,42 +684,90 @@ function attachmentFilename(title) {
   return name.slice(0, name.length - extension.length).slice(0, 160) + extension.slice(0, 20);
 }
 
+const attachmentOpens = new Map();
+
 async function openAttachment({ kind, id, fileId } = {}) {
   if (!['task', 'bug'].includes(kind) || ![id, fileId].every(n => Number.isSafeInteger(n) && n > 0)) {
     return { ok: false, error: '附件请求无效' };
   }
-  let directory;
-  let opened = false;
-  let stage = '读取附件信息';
+  const operationClient = client, revision = connectionRevision;
   try {
-    // 回查所属详情和权限；不信任前端提供的路径、文件名或下载地址。
-    const detail = await (kind === 'task' ? client.getTaskDetail(id) : client.getBugDetail(id));
-    const file = detailFiles(detail).find(f => f.id === fileId);
+    // 每次仍回查权限与归属；缓存信息只采用服务端返回值。
+    const detail = await (kind === 'task' ? operationClient.getTaskDetail(id) : operationClient.getBugDetail(id));
+    if (revision !== connectionRevision) return { ok: false, error: '连接配置已变化，请重新打开附件' };
+    if (!detail || Number(detail.id) !== id) throw new Error('Attachment detail mismatch');
+    const file = Object.values(detail.files || {}).find(f => Number(f.id) === fileId);
     if (!file) return { ok: false, error: '此任务或缺陷已无该附件，请刷新详情' };
 
-    stage = '保存附件';
-    directory = await fs.promises.mkdtemp(path.join(app.getPath('temp'), 'zentao-attachment-'));
-    const destination = path.join(directory, attachmentFilename(file.name));
-    stage = '下载附件';
-    await client.downloadFile(file.id, destination);
+    // 存储标识仅参与摘要，绝不作为本地路径。不同连接、账号、记录与版本相互隔离。
+    const version = JSON.stringify([STATE_DIR, operationClient.cfg.baseUrl, operationClient.cfg.account.toLowerCase(),
+      kind, id, fileId, file.title, file.extension, file.size, file.pathname, file.addedDate]);
+    const digest = createHash('sha256').update(version).digest('hex');
+    const directory = path.join(app.getPath('temp'), 'zentao-attachment-' + digest);
+    const key = digest;
+    if (attachmentOpens.has(key)) return await attachmentOpens.get(key);
+    const opening = openAttachmentFile(operationClient, file, directory, revision);
+    attachmentOpens.set(key, opening);
+    try {
+      return await opening;
+    } finally {
+      attachmentOpens.delete(key);
+    }
+  } catch (e) {
+    return attachmentError('读取附件信息', e);
+  }
+}
+
+async function openAttachmentFile(operationClient, file, directory, revision) {
+  let temporaryDirectory;
+  let opened = false, reused = false, saved = false;
+  let stage = '保存附件';
+  try {
+    const name = attachmentFilename(String(file.title));
+    const destination = path.join(directory, name);
+    let cached;
+    try {
+      cached = await fs.promises.lstat(destination);
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw e;
+    }
+    if (cached && !cached.isFile()) throw new Error('Attachment cache is not a regular file');
+    reused = Boolean(cached && (file.size === undefined || cached.size === Number(file.size)));
+    if (!reused) {
+      // 完整下载到独立临时目录后才发布缓存，进程中断也不会复用半成品。
+      temporaryDirectory = await fs.promises.mkdtemp(path.join(app.getPath('temp'), 'zentao-attachment-'));
+      const downloaded = path.join(temporaryDirectory, name);
+      stage = '下载附件';
+      await operationClient.downloadFile(Number(file.id), downloaded);
+      stage = '保存附件';
+      await fs.promises.mkdir(directory, { recursive: true });
+      saved = true;
+      await fs.promises.rename(downloaded, destination);
+    }
+    if (revision !== connectionRevision) return { ok: false, error: '连接配置已变化，请重新打开附件' };
     stage = '本地打开附件';
     const error = await shell.openPath(destination);
     if (error) throw new Error('System could not open attachment');
     opened = true;
     return { ok: true };
   } catch (e) {
-    const hint = e.status === 403 ? '无权限'
-      : e.status === 401 ? '登录失效，请检查账号配置'
-      : e.status ? 'HTTP ' + e.status
-      : stage === '本地打开附件' ? '请检查系统默认程序及文件访问权限'
-      : stage === '保存附件' ? '请检查磁盘空间及目录权限'
-      : stage === '下载附件' && e instanceof ZentaoError ? e.message
-      : stage === '下载附件' ? '请检查网络、登录状态、磁盘空间及目录权限'
-      : '请检查网络及登录状态';
-    return { ok: false, error: stage + '失败：' + hint };
+    return attachmentError(stage, e);
   } finally {
-    if (directory && !opened) await fs.promises.rm(directory, { recursive: true, force: true });
+    if (temporaryDirectory) await fs.promises.rm(temporaryDirectory, { recursive: true, force: true });
+    if (saved && !opened) await fs.promises.rm(directory, { recursive: true, force: true });
   }
+}
+
+function attachmentError(stage, e) {
+  const hint = e.status === 403 ? '无权限'
+    : e.status === 401 ? '登录失效，请检查账号配置'
+    : e.status ? 'HTTP ' + e.status
+    : stage === '本地打开附件' ? '请检查系统默认程序及文件访问权限'
+    : stage === '保存附件' ? '请检查磁盘空间及目录权限'
+    : stage === '下载附件' && e instanceof ZentaoError ? e.message
+    : stage === '下载附件' ? '请检查网络、登录状态、磁盘空间及目录权限'
+    : '请检查网络及登录状态';
+  return { ok: false, error: stage + '失败：' + hint };
 }
 
 async function runAction(kind, event, request) {

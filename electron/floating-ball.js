@@ -135,7 +135,7 @@ function createFloatingBall(panel, savedPosition, onMove) {
     });
     preview.setAlwaysOnTop(true, process.platform === 'win32' ? 'pop-up-menu' : 'floating');
     preview.webContents.on('ipc-message', (_event, channel, requested) => {
-      if (channel !== 'preview:open') return;
+      if (disposed || channel !== 'preview:open') return;
       const item = previewItems.find(item => item.id === requested?.id && item.kind === requested?.kind);
       if (!item) return;
       showPanel(true);
