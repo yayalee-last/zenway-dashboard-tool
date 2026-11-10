@@ -23,6 +23,7 @@ const DEFAULTS = {
 };
 
 const CLOSED_EXEC = new Set(['closed', 'suspended']);
+const WRITE_TIMEOUT_MS = 60000;
 const { taskChildren, isParentTask } = require('./task-context');
 const { positiveId, assertRestOperation } = require('./request-safety');
 const { actionPayload } = require('./action-policy');
@@ -187,9 +188,10 @@ class ZentaoClient {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(json);
     }
-    let res;
+    let res, text;
     try {
       res = await fetch(url, init);
+      text = await res.text();
     } catch (e) {
       const hint = String(this.cfg.baseUrl).includes('your-zentao-host') ? '（还是占位地址，先填真实禅道地址）' : '';
       throw new ZentaoError(`连不上禅道${hint}（连接失败、超时或重定向已被阻止）`, 0, null,
@@ -197,7 +199,6 @@ class ZentaoClient {
     }
     if (res.status >= 300 && res.status < 400) throw new ZentaoError('禅道重定向已被阻止，请配置最终部署地址', res.status, null,
       method !== 'GET' && !path.endsWith('/tokens') ? 'unknown' : 'rejected');
-    const text = await res.text();
     let body = null;
     try {
       body = text ? JSON.parse(text) : null;
@@ -252,7 +253,8 @@ class ZentaoClient {
     await this.ensureToken();
     // A lost response/login page does not prove that a write did not execute.
     // Never transparently replay an action after reauthentication.
-    const r = await this._raw(method, '/api.php/v1' + path, { json: body });
+    // 写入可能包含通知等耗时处理；不受列表默认 15 秒的等待时间限制。
+    const r = await this._raw(method, '/api.php/v1' + path, { json: body, timeout: Math.max(this.cfg.timeoutMs, WRITE_TIMEOUT_MS) });
     if (r.html) throw new ZentaoError('禅道返回了登录页；操作结果未确认，请先在网页核对，勿直接重试', 401, null, 'unknown');
     if (r.status !== 200 && r.status !== 201) {
       const detail = pickError(r.body, [this.cfg.password, this.token]);

@@ -202,9 +202,73 @@ test('write transport error after dispatch is unknown and the write is not repla
   assert.equal(result.outcome, 'unknown');
   assert.equal(result.retrySafe, false);
   assert.equal(writes, 1);
-  assert.equal(f.reads.length, 1, 'no blind retry or assumed post-write confirmation');
+  assert.equal(f.reads.length, 2, 'read back once without replaying the write');
   assert.equal((await f.invoke('task:action', taskRequest('start'))).outcome, 'unknown');
   assert.equal(writes, 1);
+});
+
+for (const action of ['close', 'assign']) {
+  test(`${action} response lost after server commit is verified with one readback and no replay`, async () => {
+    const f = assignmentFixture(task({ status: 'done' }));
+    const method = action === 'assign' ? 'assignTask' : 'closeTask';
+    f.client[method] = async (id, payload) => {
+      f.writes.push({ method, id, payload });
+      f.tasks.set(id, { ...f.tasks.get(id), ...(action === 'assign' ? { assignedTo: 'next' } : { status: 'closed' }) });
+      throw new Error('connection reset after server commit');
+    };
+    const request = action === 'assign' ? assignmentRequest('next') : taskRequest('close');
+    const result = await f.invoke('task:action', request);
+    assert.equal(result.outcome, 'verified');
+    assert.equal(result.ok, true);
+    assert.equal(f.writes.length, 1);
+    assert.equal(f.reads.length, 2);
+    assert.equal(result.status, action === 'assign' ? 'done' : 'closed');
+  });
+}
+
+for (const verification of ['unchanged', 'wrong id', 'wrong state', 'deleted', 'unreadable']) {
+  test(`lost assignment response with ${verification} readback remains blocked`, async () => {
+    const f = assignmentFixture();
+    f.client.assignTask = async (id, payload) => {
+      f.writes.push({ method: 'assignTask', id, payload });
+      const latest = task({ status: 'done', assignedTo: 'Me' });
+      if (verification === 'unchanged') latest.assignedTo = 'other';
+      if (verification === 'wrong id') latest.id = 11;
+      if (verification === 'wrong state') latest.status = 'closed';
+      if (verification === 'deleted') latest.deleted = true;
+      f.tasks.set(id, verification === 'unreadable' ? new Error('readback unavailable') : latest);
+      throw new Error('connection reset after submit');
+    };
+    const result = await f.invoke('task:action', assignmentRequest());
+    assert.equal(result.outcome, 'unknown');
+    assert.equal(result.retrySafe, false);
+    assert.equal(f.reads.length, 2);
+    assert.equal((await f.invoke('task:action', assignmentRequest())).outcome, 'unknown');
+    assert.equal(f.writes.length, 1);
+  });
+}
+
+test('lost bug close response is verified only by fresh closed detail', async () => {
+  const f = mainFixture();
+  const b = addBug(f, bug({ status: 'resolved' }));
+  f.client.closeBug = async (id, comment) => {
+    f.writes.push({ method: 'closeBug', id, payload: { comment } });
+    b.current = bug({ status: 'closed' });
+    throw new Error('connection reset after server commit');
+  };
+  const result = await f.invoke('bug:action', bugRequest('close'));
+  assert.equal(result.outcome, 'verified');
+  assert.equal(f.client.bugReads.length, 2);
+  assert.equal(f.writes.length, 1);
+});
+
+test('write rejection before dispatch is not reconciled as a submitted write', async () => {
+  const f = mainFixture([task({ status: 'done' })]);
+  f.client.closeTask = async () => { throw Object.assign(new Error('authentication failed'), { outcome: 'rejected' }); };
+  const result = await f.invoke('task:action', taskRequest('close'));
+  assert.equal(result.outcome, 'rejected');
+  assert.equal(f.reads.length, 1);
+  assert.equal(f.writes.length, 0);
 });
 
 test('unknown outcomes remain blocked until an explicit fresh valid detail read', async () => {

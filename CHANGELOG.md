@@ -4,6 +4,12 @@
 
 ## 未发布
 
+## [0.3.20](https://github.com/yayalee-last/zenway-dashboard-tool/compare/v0.3.19...v0.3.20) — 2026-11-10
+
+### 修复
+
+- 任务和缺陷写请求至少等待 60 秒，减少服务端处理较慢时被默认 15 秒提前中断；超时、断线或响应异常后只读回查一次，确认目标状态及指派人后才提示成功。无法确认时继续阻止重试，不自动重发写请求；响应正文读取超时也纳入同一处理流程。
+
 ## [0.3.19](https://github.com/yayalee-last/zenway-dashboard-tool/compare/v0.3.18...v0.3.19) — 2026-11-09
 
 ### 修复

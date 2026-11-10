@@ -233,6 +233,52 @@ test('uncertain write outcomes are never retried automatically', async () => {
   }
 });
 
+test('slow writes have at least 60 seconds without extending ordinary reads or shortening a longer configured timeout', async t => {
+  const timeout = AbortSignal.timeout.bind(AbortSignal);
+  const budgets = [];
+  t.mock.method(AbortSignal, 'timeout', ms => {
+    budgets.push(ms);
+    return timeout(ms / 100);
+  });
+  let writes = 0;
+  const server = http.createServer((req, res) => {
+    if (req.method === 'GET') { res.end('{"id":17}'); return; }
+    writes++;
+    req.resume();
+    setTimeout(() => res.end('{"id":17}'), 250);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const c = client();
+    c.applyConfig({ ...c.cfg, baseUrl: `http://127.0.0.1:${server.address().port}` });
+    c.token = 'synthetic-token';
+    c.tokenExpireAt = Date.now() + 60000;
+    await c.getTaskDetail(17);
+    await c.closeTask(17);
+    await c.assignTask(17, { assignedTo: 'next' });
+    c.applyConfig({ ...c.cfg, timeoutMs: 90000 });
+    await c.closeTask(17);
+    assert.deepEqual(budgets, [15000, 60000, 60000, 90000]);
+    assert.equal(writes, 3);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('response body timeout is classified as an uncertain write and never replayed', async () => {
+  let calls = 0;
+  await withFetch(async () => {
+    calls++;
+    return { status: 200, text: async () => { throw new DOMException('body interrupted', 'TimeoutError'); } };
+  }, async () => {
+    const c = client();
+    c.ensureToken = async () => 'synthetic-token';
+    await assert.rejects(c.closeTask(17), error => error instanceof ZentaoError && error.outcome === 'unknown');
+  });
+  assert.equal(calls, 1);
+});
+
 test('server errors are bounded and do not echo credentials, tokens or HTML', async () => {
   const secret = 'fixture-secret-token-abc';
   const huge = `password=not-a-real-password Token: ${secret} ${'<b>'.repeat(4000)}server detail`;

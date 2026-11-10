@@ -812,13 +812,18 @@ async function runAction(kind, event, request) {
       if (!users.some(user => user.account === payload.assignedTo)) return rejected('指派人员已不可用，请重新打开指派窗口');
     }
     dispatched = true;
-    if (kind === 'task') {
-      if (action === 'start') await operationClient.startTask(id, payload, current);
-      else if (action === 'finish') await operationClient.finishTask(id, payload, current);
-      else if (action === 'assign') await operationClient.assignTask(id, payload);
-      else await operationClient.closeTask(id, payload.closedReason);
-    } else if (action === 'resolve') await operationClient.resolveBug(id, payload);
-    else await operationClient.closeBug(id, payload.comment);
+    try {
+      if (kind === 'task') {
+        if (action === 'start') await operationClient.startTask(id, payload, current);
+        else if (action === 'finish') await operationClient.finishTask(id, payload, current);
+        else if (action === 'assign') await operationClient.assignTask(id, payload);
+        else await operationClient.closeTask(id, payload.closedReason);
+      } else if (action === 'resolve') await operationClient.resolveBug(id, payload);
+      else await operationClient.closeBug(id, payload.comment);
+    } catch (error) {
+      if (error.outcome === 'rejected') throw error;
+      // 响应丢失不代表写入失败；只读回查确认结果，绝不重发写请求。
+    }
 
     await new Promise(resolve => setTimeout(resolve, 400));
     let verified;
