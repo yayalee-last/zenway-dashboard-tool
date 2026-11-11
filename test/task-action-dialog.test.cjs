@@ -166,7 +166,7 @@ test('confirmation is the only task write and dismissal restores detail height',
   assert.equal(detail.resizeCalls.at(-1), 600);
 });
 
-test('task duplicate confirm and cancel/reopen while pending never send another write or touch newer dialog', async () => {
+test('task duplicate confirm and cancel/reopen while pending never repeat the write or close the newer dialog', async () => {
   const h = rendererHarness();
   const d = deferred();
   h.window.taskActionResult = () => d.promise;
@@ -177,13 +177,12 @@ test('task duplicate confirm and cancel/reopen while pending never send another 
   assert.equal(h.writes.length, 1);
   h.get('tm-cancel').listeners.click();
   h.context.openTaskAction('finish', item);
-  const newError = h.get('tm-err').textContent;
   await h.context.confirmTaskAction();
   assert.equal(h.writes.length, 1);
   d.resolve({ ok: false, outcome: 'rejected', error: 'known failure' });
   await first;
   assert.equal(h.get('task-modal').hidden, false);
-  assert.equal(h.get('tm-err').textContent, newError, 'old completion must not change a newer dialog');
+  assert.equal(h.get('tm-err').textContent, 'known failure');
   h.get('tm-cancel').listeners.click();
   h.window.taskActionResult = () => Promise.resolve({ ok: true, outcome: 'verified' });
   h.context.openTaskAction('finish', item);
@@ -294,13 +293,12 @@ test('bug duplicate/cancel/reopen, known retry, uncertain result, and rejected b
   await h.context.confirmBugAction();
   h.get('bm-cancel').listeners.click();
   h.context.openBugAction('resolve', item);
-  const err = h.get('bm-err').textContent;
   await h.context.confirmBugAction();
   assert.equal(h.bugWrites.length, 1);
   d.resolve({ ok: false, outcome: 'rejected', retrySafe: true, error: 'known' });
   await first;
   assert.equal(h.get('bug-modal').hidden, false);
-  assert.equal(h.get('bm-err').textContent, err);
+  assert.equal(h.get('bm-err').textContent, 'known');
   h.get('bm-cancel').listeners.click();
 
   let calls = 0;
@@ -548,4 +546,81 @@ test('assignment waits for native resize before loading actionable personnel', a
   await opened;
   assert.equal(reads, 1);
   assert.equal(h.get('tm-assignee').disabled, false);
+});
+for (const mode of ['task', 'assign', 'bug']) {
+  for (const outcome of ['verified', 'rejected', 'unknown']) {
+    test(`reopened ${mode} dialog settles ${outcome} without stale pending text or another write`, async () => {
+      const h = rendererHarness();
+      const gate = deferred();
+      const task = mode !== 'bug';
+      const prefix = task ? 'tm' : 'bm';
+      const open = task ? 'openTaskAction' : 'openBugAction';
+      const close = task ? 'closeTaskAction' : 'closeBugAction';
+      const confirm = task ? 'confirmTaskAction' : 'confirmBugAction';
+      const action = mode === 'assign' ? 'assign' : task ? 'finish' : 'resolve';
+      const item = mode === 'assign' ? assignableTask() : { id: 178, name: 'Fixture record', left: 1 };
+      h.window[task ? 'taskActionResult' : 'bugActionResult'] = () => gate.promise;
+      await h.context[open](action, item);
+      if (mode === 'assign') chooseAssignee(h, 'next');
+      const first = h.context[confirm]();
+      h.context[close]();
+      await h.context[open](action, item);
+      if (mode === 'assign') chooseAssignee(h, 'me');
+      h.get(task ? 'tm-consumed' : 'bm-comment').value = task ? '7' : 'new comment';
+      assert.equal(h.get(prefix + '-ok').disabled, true);
+      gate.resolve({ ok: outcome === 'verified', outcome, status: task ? 'done' : 'resolved', error: 'fixture rejection' });
+      await first;
+      assert.equal(h.get(task ? 'task-modal' : 'bug-modal').hidden, false);
+      assert.equal(h.get(task ? 'tm-consumed' : 'bm-comment').value, task ? '7' : 'new comment');
+      assert.doesNotMatch(h.get(prefix + '-ok').textContent, /处理中|提交中/);
+      if (outcome === 'verified') {
+        assert.equal(h.get(prefix + '-ok').textContent, '操作已完成');
+        assert.equal(h.get(prefix + '-err').hidden, true);
+        assert.match(h.get('toast').textContent, /已完成.*最新详情/);
+      } else {
+        assert.equal(h.get(prefix + '-err').hidden, false);
+        assert.match(h.get(prefix + '-err').textContent, outcome === 'unknown' ? /操作结果未知/ : /fixture rejection/);
+        assert.equal(h.get(prefix + '-ok').textContent, mode === 'assign' ? '确认指派' : '确认');
+      }
+      if (mode === 'assign') {
+        assert.equal(h.get('tm-assignee').value, 'me', 'the newer choice is preserved');
+        chooseAssignee(h, 'next');
+        h.get('tm-user-search').value = '';
+        h.get('tm-user-search').listeners.input();
+        chooseAssignee(h, 'me');
+      }
+      assert.equal(h.get(prefix + '-ok').disabled, outcome !== 'rejected');
+      h.window[task ? 'taskActionResult' : 'bugActionResult'] = () => Promise.resolve({ ok: true, outcome: 'verified' });
+      await h.context[confirm]();
+      assert.equal((task ? h.writes : h.bugWrites).length, outcome === 'rejected' ? 2 : 1);
+    });
+  }
+}
+
+test('settling an old operation never changes another record or connection dialog', async () => {
+  for (const changeConnection of [false, true]) {
+    for (const kind of ['task', 'bug']) {
+      const h = rendererHarness();
+      const gate = deferred();
+      const task = kind === 'task', prefix = task ? 'tm' : 'bm';
+      const open = task ? 'openTaskAction' : 'openBugAction';
+      const close = task ? 'closeTaskAction' : 'closeBugAction';
+      const confirm = task ? 'confirmTaskAction' : 'confirmBugAction';
+      h.window[task ? 'taskActionResult' : 'bugActionResult'] = () => gate.promise;
+      h.context[open](task ? 'finish' : 'resolve', { id: 178, name: 'Old record' });
+      const first = h.context[confirm]();
+      h.context[close]();
+      if (changeConnection) {
+        vm.runInContext('renderAll = () => {}', h.context);
+        h.context.apply({ config: { baseUrl: 'https://new.invalid', account: 'new' }, state: { items: [] } });
+      }
+      h.context[open](task ? 'finish' : 'resolve', { id: changeConnection ? 178 : 179, name: 'New record' });
+      gate.resolve({ ok: false, outcome: 'unknown', error: 'old error' });
+      await first;
+      assert.equal(h.get(prefix + '-ok').textContent, '确认');
+      assert.equal(h.get(prefix + '-ok').disabled, false);
+      assert.equal(h.get(prefix + '-err').hidden, true);
+      assert.equal(h.get('toast').textContent, '');
+    }
+  }
 });

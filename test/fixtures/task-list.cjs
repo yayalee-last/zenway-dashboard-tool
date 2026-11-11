@@ -11,6 +11,7 @@ const profile = path.join(output, 'user-data');
 fs.mkdirSync(profile, { recursive: true });
 app.setPath('userData', profile);
 let win;
+let assignmentGate = null;
 let failNext = false;
 let failUsers = false;
 const writes = [];
@@ -53,6 +54,13 @@ ipcMain.handle('task:action', async (_event, action) => {
   if (action.action === 'assign') {
     assert.deepEqual(Object.keys(action.payload), ['assignedTo']);
     if (failNext) { failNext = false; return { ok: false, outcome: 'rejected', error: '没有指派任务的权限（测试）' }; }
+    if (assignmentGate) {
+      const gate = assignmentGate;
+      assignmentGate = null;
+      gate.started();
+      await gate.promise;
+      if (gate.outcome !== 'verified') return { ok: false, outcome: gate.outcome, error: '指派结果测试' };
+    }
     await pause(40);
     task.assignedTo = action.payload.assignedTo;
     win.webContents.send('state', state());
@@ -209,6 +217,46 @@ app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('#dt-foot .primary') === null"), true);
     await js('closeDetail()');
     assert.equal(await js("document.querySelectorAll('.item').length"), 4);
+
+    for (const outcome of ['verified', 'rejected', 'unknown']) {
+      items[1].assignedTo = 'other';
+      await js('openDetail({id:2,kind:"task"})');
+      await js("document.querySelector('.dt-assign').click()");
+      await until("!document.getElementById('tm-assignee').disabled");
+      await js("document.getElementById('tm-assignee').value = 'list-test'; document.getElementById('tm-assignee').dispatchEvent(new Event('change'))");
+      let release, started;
+      const waiting = new Promise(resolve => { started = resolve; });
+      assignmentGate = { outcome, started, promise: new Promise(resolve => { release = resolve; }) };
+      const before = writes.length;
+      await js("document.getElementById('tm-ok').click(); document.getElementById('tm-ok').click()");
+      await waiting;
+      await js("document.getElementById('tm-cancel').click(); document.querySelector('.dt-assign').click()");
+      await until("!document.getElementById('tm-assignee').disabled");
+      await js("document.getElementById('tm-assignee').value = 'next'; document.getElementById('tm-assignee').dispatchEvent(new Event('change'))");
+      assert.equal(await js("document.getElementById('tm-ok').disabled"), true);
+      assert.match(await js("document.getElementById('tm-err').textContent"), /仍在处理中/);
+      release();
+      await until("!taskWrites.size && document.getElementById('tm-ok').textContent !== '请求处理中…'");
+      assert.equal(await js("document.getElementById('task-modal').hidden"), false);
+      assert.equal(await js("document.getElementById('tm-assignee').value"), 'next');
+      assert.equal(await js("document.getElementById('tm-ok').getBoundingClientRect().bottom <= innerHeight"), true);
+      if (outcome === 'verified') {
+        assert.equal(await js("document.getElementById('tm-ok').textContent"), '操作已完成');
+        assert.equal(await js("document.getElementById('tm-err').hidden"), true);
+        await until("DT.data.assignedTo === 'list-test'");
+      } else {
+        assert.equal(await js("document.getElementById('tm-ok').textContent"), '确认指派');
+        assert.match(await js("document.getElementById('tm-err').textContent"), outcome === 'unknown' ? /操作结果未知/ : /指派结果测试/);
+      }
+      assert.equal(await js("document.getElementById('tm-ok').disabled"), outcome !== 'rejected');
+      if (outcome !== 'rejected') {
+        await js("document.getElementById('tm-ok').click(); confirmTaskAction()");
+      }
+      assert.equal(writes.length, before + 1, 'settling and repeated clicks never replay a write');
+      await js('closeTaskAction()');
+    }
+    await js('closeDetail()');
+
     fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify({ passed: true, writes, saved }, null, 2));
     app.quit();
   } catch (error) {

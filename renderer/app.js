@@ -398,6 +398,34 @@ function setActionError(id, text, uncertain = false, kind = 'task') {
   };
 }
 
+function showActionFailure(kind, session, result) {
+  const task = kind === 'task', prefix = task ? 'tm' : 'bm';
+  const unknown = result?.outcome !== 'rejected';
+  $(prefix + '-ok').disabled = unknown || (task && session.action === 'assign' && (!session.usersLoaded || !session.assignedTo));
+  $(prefix + '-ok').textContent = task && session.action === 'assign' ? '确认指派' : '确认';
+  setActionError(prefix + '-err', unknown
+    ? `操作结果未知：${result?.error || '请求未能确认'}。请先在禅道网页检查记录，再重新打开${task ? '任务' : '缺陷'}详情后操作；不会自动重试。`
+    : (result?.error || '操作失败，请重试。'), unknown, kind);
+}
+
+function settleReopenedAction(kind, item, key, result) {
+  if (actionKey(kind, item.id) !== key) return;
+  const task = kind === 'task', prefix = task ? 'tm' : 'bm';
+  const session = task ? pending : bugPending;
+  // 只同步同一记录的结果，保留重开弹窗里的输入，不关闭新弹窗。
+  if (session && session.it.id === item.id && !$(task ? 'task-modal' : 'bug-modal').hidden) {
+    if (result?.ok !== true) return showActionFailure(kind, session, result);
+    session.completed = true;
+    $(prefix + '-err').hidden = true;
+    $(prefix + '-ok').disabled = true;
+    $(prefix + '-ok').textContent = '操作已完成';
+    toast('上次操作已完成，请关闭此窗口查看最新详情。', 'ok');
+  }
+  if (result?.ok === true && DT.open && DT.kind === kind && DT.id === item.id) {
+    return task ? loadDetail(item.id) : loadBugDetail(item.id);
+  }
+}
+
 function bugUrl(id) {
   const base = String(S.cfg.baseUrl || '').replace(/\/+$/, '');
   return `${base}/index.php?m=bug&f=view&id=${id}`;
@@ -491,7 +519,7 @@ function selectTaskAssignee() {
   if (!pending || pending.action !== 'assign') return;
   pending.assignedTo = $('tm-assignee').value;
   const key = actionKey('task', pending.it.id);
-  $('tm-ok').disabled = !pending.assignedTo || taskWrites.has(key) || uncertainTaskWrites.has(key);
+  $('tm-ok').disabled = pending.completed || !pending.assignedTo || taskWrites.has(key) || uncertainTaskWrites.has(key);
 }
 
 function closeTaskAction() {
@@ -506,7 +534,7 @@ async function confirmTaskAction() {
   const session = pending;
   const { action, it } = session;
   const key = actionKey('task', it.id);
-  if (taskWrites.has(key) || uncertainTaskWrites.has(key)) return;
+  if (session.completed || taskWrites.has(key) || uncertainTaskWrites.has(key)) return;
   if (action === 'assign' && (!session.usersLoaded || !session.users.some(user => user.account === session.assignedTo && user.account !== it.assignedTo))) {
     return setActionError('tm-err', '请先选择指派人员');
   }
@@ -527,17 +555,12 @@ async function confirmTaskAction() {
   if (r?.ok !== true) {
     const unknown = r?.outcome !== 'rejected';
     if (unknown) uncertainTaskWrites.set(key, session.token);
-    if (current) {
-      btn.disabled = unknown;
-      btn.textContent = action === 'assign' ? '确认指派' : '确认';
-      setActionError('tm-err', unknown
-        ? `操作结果未知：${r.error || '请求未能确认'}。请先在禅道网页检查记录，再重新打开任务详情后操作；不会自动重试。`
-        : (r?.error || '操作失败，请重试。'), unknown);
-    }
+    if (current) showActionFailure('task', session, r);
+    else settleReopenedAction('task', it, key, r);
     return;
   }
 
-  if (!current) return;
+  if (!current) return settleReopenedAction('task', it, key, r);
   closeTaskAction();
   toast(action === 'assign' ? '指派成功' : action === 'close' ? '任务已关闭' : action === 'finish' || r.status === 'done' ? '已完成' : '已开始', 'ok');
   if (DT.open && DT.kind === 'task' && DT.id === it.id) loadDetail(DT.id);
@@ -585,7 +608,7 @@ async function confirmBugAction() {
   const session = bugPending;
   const { action, it } = session;
   const key = actionKey('bug', it.id);
-  if (bugWrites.has(key) || uncertainBugWrites.has(key)) return;
+  if (session.completed || bugWrites.has(key) || uncertainBugWrites.has(key)) return;
   const comment = $('bm-comment').value.trim();
   const payload =
     action === 'resolve'
@@ -604,17 +627,12 @@ async function confirmBugAction() {
   if (r?.ok !== true) {
     const unknown = r?.outcome !== 'rejected';
     if (unknown) uncertainBugWrites.set(key, session.token);
-    if (current) {
-      btn.disabled = unknown;
-      btn.textContent = '确认';
-      setActionError('bm-err', unknown
-        ? `操作结果未知：${r.error || '请求未能确认'}。请先在禅道网页检查记录，再重新打开缺陷详情后操作；不会自动重试。`
-        : (r?.error || '操作失败，请重试。'), unknown, 'bug');
-    }
+    if (current) showActionFailure('bug', session, r);
+    else settleReopenedAction('bug', it, key, r);
     return;
   }
 
-  if (!current) return;
+  if (!current) return settleReopenedAction('bug', it, key, r);
   closeBugAction();
   toast(action === 'resolve' ? '已标记为解决' : '缺陷已关闭', 'ok');
   if (DT.open && DT.kind === 'bug' && DT.id === it.id) loadBugDetail(it.id);

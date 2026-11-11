@@ -655,3 +655,34 @@ test('stale assignee response is discarded after changing connection', async () 
   gate.resolve([{ account: 'old-connection-user', realname: 'Old' }]);
   assert.equal((await read).ok, false);
 });
+for (const mode of ['task', 'assign', 'bug']) {
+  for (const outcome of ['verified', 'unknown']) {
+    test(`${mode} ${outcome} result and write lock settle before a slow list refresh`, async () => {
+      const f = mode === 'assign' ? assignmentFixture() : mainFixture([task()]);
+      const refresh = deferred();
+      let refreshes = 0;
+      f.client.fetchMyTasks = () => { refreshes++; return refresh.promise; };
+      if (mode === 'bug') addBug(f);
+      if (outcome === 'unknown') {
+        const write = mode === 'assign' ? 'assignTask' : mode === 'bug' ? 'resolveBug' : 'startTask';
+        f.client[write] = async (id, payload) => { f.writes.push({ method: write, id, payload }); };
+      }
+      const channel = mode === 'bug' ? 'bug:action' : 'task:action';
+      const request = mode === 'assign' ? assignmentRequest() : mode === 'bug' ? bugRequest('resolve') : taskRequest('start');
+      let result;
+      const first = f.invoke(channel, request).then(value => { result = value; return value; });
+      try {
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(refreshes, 1, 'list refresh is still requested');
+        assert.equal(result?.outcome, outcome, 'a slow list cannot delay the known operation result');
+        assert.equal((await f.invoke(channel, request)).outcome, outcome === 'unknown' ? 'unknown' : 'rejected');
+        assert.equal(f.writes.length, 1, 'refreshing never replays the write');
+      } finally {
+        refresh.resolve({ items: [], strategy: 'fixture' });
+        await first;
+      }
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(f.state().ok, true, 'the asynchronous refresh still publishes list state');
+    });
+  }
+}

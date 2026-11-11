@@ -795,6 +795,7 @@ async function runAction(kind, event, request) {
   const account = config.account;
   const read = () => kind === 'task' ? operationClient.getTaskDetail(id) : operationClient.getBugDetail(id);
   let dispatched = false;
+  let refreshReason = null;
   try {
     const current = await read();
     if (!current || Number(current.id) !== id) return rejected('当前详情不可用，请刷新或在禅道网页核对');
@@ -829,7 +830,7 @@ async function runAction(kind, event, request) {
     let verified;
     try { verified = await read(); } catch { /* An accepted write is not proof of its final state. */ }
     const expected = action === 'assign' ? current.status : { start: 'doing', finish: 'done', resolve: 'resolved', close: 'closed' }[action];
-    await doRefresh('action');
+    refreshReason = 'action';
     // 保留 22.6 开始时剩余为 0 直接完成的现有流程。
     const completedOnStart = action === 'start' && payload.left === 0 && verified?.status === 'done';
     const assigneeMatches = action !== 'assign' || accountOf(verified) === payload.assignedTo;
@@ -842,11 +843,14 @@ async function runAction(kind, event, request) {
   } catch (error) {
     if (!dispatched || error.outcome === 'rejected') return rejected(error.message || '操作前检查失败，未提交写请求');
     markUncertain(key);
-    await doRefresh('action-unknown');
+    refreshReason = 'action-unknown';
     return { ok: false, outcome: 'unknown', retrySafe: false,
       error: `${error.message || '请求异常'}；操作结果未确认，请先在禅道网页核对，勿直接重试`, state };
   } finally {
     actionInFlight.delete(key);
+    if (refreshReason) {
+      doRefresh(refreshReason).catch(error => console.error('操作后刷新失败：', error));
+    }
   }
 }
 
