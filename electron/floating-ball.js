@@ -14,7 +14,7 @@ function contains(bounds, point) {
     && point.y >= bounds.y && point.y < bounds.y + bounds.height;
 }
 
-function createFloatingBall(panel, savedPosition, onMove) {
+function createFloatingBall(panel, savedPosition, onMove, onClose) {
   const saved = savedPosition && Number.isFinite(savedPosition.x) && Number.isFinite(savedPosition.y);
   const area = (saved ? screen.getDisplayNearestPoint(savedPosition) : screen.getPrimaryDisplay()).workArea;
   const x = saved ? savedPosition.x : area.x + area.width - SIZE - 20;
@@ -212,9 +212,14 @@ function createFloatingBall(panel, savedPosition, onMove) {
     panel.removeListener('hide', resetHover);
     panel.removeListener('show', hidePreview);
     panel.removeListener('closed', destroy);
-    ball.removeListener('closed', destroy);
+    ball.removeListener('closed', onBallClosed);
     preview?.destroy();
     if (!ball.isDestroyed()) ball.destroy();
+  }
+
+  function onBallClosed() {
+    destroy();
+    onClose?.(taskDialogOpen);
   }
 
   pinBall();
@@ -238,7 +243,7 @@ function createFloatingBall(panel, savedPosition, onMove) {
   panel.on('hide', resetHover);
   panel.on('show', hidePreview);
   panel.once('closed', destroy);
-  ball.once('closed', destroy);
+  ball.once('closed', onBallClosed);
   ball.loadFile(path.join(__dirname, '..', 'renderer', 'floating-ball.html'));
 
   return {

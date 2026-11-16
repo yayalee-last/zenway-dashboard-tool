@@ -116,6 +116,17 @@ function syncWindowPin() {
   win.setAlwaysOnTop(Boolean(config.alwaysOnTop), level);
 }
 
+function createFloatingController(panel) {
+  floatingBall = createFloatingBall(panel, config.ballPosition, (ballPosition) => saveConfig({ ballPosition }), (taskDialogOpen) => {
+    if (app.__quitting || panel.isDestroyed()) return;
+    const panelVisible = panel.isVisible();
+    createFloatingController(panel);
+    floatingBall.setTaskDialogOpen(taskDialogOpen);
+    pushState();
+    if (!panelVisible) panel.hide();
+  });
+}
+
 function createWindow() {
   const shotArg = process.argv.find((a) => a.startsWith('--shot='));
   const area = screen.getPrimaryDisplay().workArea;
@@ -169,7 +180,7 @@ function createWindow() {
     if (shotArg) {
       win.show();
     } else {
-      floatingBall = createFloatingBall(win, config.ballPosition, (ballPosition) => saveConfig({ ballPosition }));
+      createFloatingController(win);
       if (process.argv.includes('--setup')) showAndFocus();
     }
     pushState();

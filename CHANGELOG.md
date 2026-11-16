@@ -4,6 +4,12 @@
 
 ## 未发布
 
+## [0.3.22](https://github.com/yayalee-last/zenway-dashboard-tool/compare/v0.3.21...v0.3.22) — 2026-11-16
+
+### 修复
+
+- 修复悬浮球意外关闭后进程仍在、浮球和预览消失且无法正常恢复的问题；重建浮球与预览，保留面板显示状态和任务弹窗驻留，正常退出或主动清理时不重建。
+
 ## [0.3.21](https://github.com/yayalee-last/zenway-dashboard-tool/compare/v0.3.20...v0.3.21) — 2026-11-11
 
 ### 修复
