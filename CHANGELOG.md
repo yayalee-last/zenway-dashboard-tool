@@ -4,6 +4,12 @@
 
 ## 未发布
 
+## [0.3.24](https://github.com/yayalee-last/zenway-dashboard-tool/compare/v0.3.23...v0.3.24) — 2026-11-17
+
+### 新增
+
+- 在任务详情确认「完成」成功后自动返回最外层列表，保留当前分类；失败或取消时保留原详情。
+
 ## [0.3.23](https://github.com/yayalee-last/zenway-dashboard-tool/compare/v0.3.22...v0.3.23) — 2026-11-17
 
 ### 新增

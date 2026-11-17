@@ -563,7 +563,10 @@ async function confirmTaskAction() {
   if (!current) return settleReopenedAction('task', it, key, r);
   closeTaskAction();
   toast(action === 'assign' ? '指派成功' : action === 'close' ? '任务已关闭' : action === 'finish' || r.status === 'done' ? '已完成' : '已开始', 'ok');
-  if (DT.open && DT.kind === 'task' && DT.id === it.id) loadDetail(DT.id);
+  if (DT.open && DT.kind === 'task' && DT.id === it.id) {
+    if (action === 'finish') closeDetail();
+    else loadDetail(DT.id);
+  }
 }
 
 /* ---------------- 缺陷流转（解决 / 关闭） ---------------- */
