@@ -7,6 +7,7 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, shell, clipboard, nativeImage, 
 const { ZentaoClient, ZentaoError, normalizeBaseUrl } = require('./zentao');
 const { Updater } = require('./updater');
 const { createFloatingBall } = require('./floating-ball');
+const { wireImagePreview } = require('./image-preview');
 const { accountOf, isMine, assigneeName, taskChildren, isParentTask } = require('./task-context');
 const { actionPayload, applicableAction } = require('./action-policy');
 
@@ -867,6 +868,7 @@ async function runAction(kind, event, request) {
 
 
 function wireIpc() {
+  wireImagePreview({ BrowserWindow, ipcMain, screen, getPanel: () => win, isMainSender: mainSender });
   ipcMain.handle('state:get', () => ({
     state,
     config: publicConfig(),

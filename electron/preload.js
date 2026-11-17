@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('zt', {
   testConfig: (patch) => ipcRenderer.invoke('config:test', patch),
   saveConfig: (patch) => ipcRenderer.invoke('config:save', patch),
   open: (url) => ipcRenderer.invoke('open:external', url),
+  previewImage: (src) => ipcRenderer.invoke('image:open', src),
   copyUrl: (url, title) => ipcRenderer.invoke('clipboard:copy-url', url, title),
   openAttachment: (payload) => ipcRenderer.invoke('attachment:open', payload),
   taskDetail: (id) => ipcRenderer.invoke('task:detail', id),

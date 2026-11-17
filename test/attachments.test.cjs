@@ -357,13 +357,14 @@ test('external names stay inside unique directories and ignore renderer paths', 
   assert.equal(new Set(f.opened).size, 7);
 });
 
-test('real Electron renders both attachment lists and routes clicks and errors through preload', { timeout: 20000 }, async t => {
+test('real Electron renders attachments and supports isolated in-app image previews', { timeout: 20000 }, async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zentao-attachment-ui-'));
   t.after(() => fs.promises.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const env = { ...process.env, ZT_ATTACHMENT_TEST_DIR: directory };
   delete env.ELECTRON_RUN_AS_NODE;
   try {
-    await promisify(execFile)(require('electron'), [path.join(__dirname, 'fixtures/attachments.cjs')], { env, windowsHide: true, timeout: 15000 });
+    // 可见性属于验收：Windows 隐藏启动标志会压住后续预览窗口。
+    await promisify(execFile)(require('electron'), [path.join(__dirname, 'fixtures/attachments.cjs')], { env, windowsHide: false, timeout: 15000 });
   } catch (error) {
     const report = path.join(directory, 'result.json');
     if (fs.existsSync(report)) error.message += '\n' + fs.readFileSync(report, 'utf8');

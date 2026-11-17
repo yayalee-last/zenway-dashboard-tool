@@ -728,12 +728,24 @@ function fixImages(root) {
   const imgs = [...root.querySelectorAll('img')];
   for (const [i, img] of imgs.entries()) {
     const src = img.getAttribute('data-orig') || img.getAttribute('src') || '';
-    // 能显示的图：点一下用浏览器看原图（挂件里只有 380px 宽）
-    img.style.cursor = 'pointer';
-    img.title = '点击在浏览器查看原图';
-    img.addEventListener('click', (e) => {
+    img.style.cursor = 'zoom-in';
+    img.title = '点击查看大图';
+    img.tabIndex = 0;
+    img.setAttribute('role', 'button');
+    img.setAttribute('aria-label', '查看大图');
+    const preview = async (e) => {
+      e.preventDefault();
       e.stopPropagation();
-      if (src && /^https?:/i.test(src)) window.zt.open(src);
+      try {
+        const result = await window.zt.previewImage(img.currentSrc || img.src);
+        if (!result.ok) toast(result.error, 'bad');
+      } catch {
+        toast('图片预览打开失败，请重试', 'bad');
+      }
+    };
+    img.addEventListener('click', preview);
+    img.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') preview(e);
     });
 
     const mark = () => {

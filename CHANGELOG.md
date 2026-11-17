@@ -4,6 +4,12 @@
 
 ## 未发布
 
+## [0.3.23](https://github.com/yayalee-last/zenway-dashboard-tool/compare/v0.3.22...v0.3.23) — 2026-11-17
+
+### 新增
+
+- 任务和缺陷详情中的图片可点击打开应用内大图预览，复用已加载图片，支持缩放、适应窗口、原始尺寸、最大化和 Esc 关闭；重复点击复用同一窗口，图片链接不再跳转系统浏览器。
+
 ## [0.3.22](https://github.com/yayalee-last/zenway-dashboard-tool/compare/v0.3.21...v0.3.22) — 2026-11-16
 
 ### 修复

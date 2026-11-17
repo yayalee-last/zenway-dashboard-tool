@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data: http: https:; base-uri 'none'; frame-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>图片预览</title>
+  <link rel="stylesheet" href="image-preview.css">
+  <script src="image-preview.js" defer></script>
+</head>
+<body>
+  <nav aria-label="图片预览工具栏">
+    <button id="zoom-out" aria-label="缩小" disabled>−</button>
+    <output id="zoom" aria-live="polite">—</output>
+    <button id="zoom-in" aria-label="放大" disabled>+</button>
+    <button id="fit" disabled>适应窗口</button>
+    <button id="actual" disabled>原始尺寸</button>
+    <span class="hint">滚轮缩放 · Esc 关闭</span>
+    <button id="close">关闭</button>
+  </nav>
+  <main id="viewport" aria-label="图片区域" tabindex="0">
+    <div id="canvas"><img id="image" alt="原图" hidden></div>
+    <p id="status" role="status">正在加载图片…</p>
+  </main>
+</body>
+</html>
