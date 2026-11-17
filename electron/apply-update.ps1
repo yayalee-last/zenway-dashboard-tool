@@ -46,7 +46,8 @@ try {
     throw
   }
 
-  Start-Process -FilePath $launch -WorkingDirectory ([IO.Path]::GetDirectoryName($launch)) -WindowStyle Hidden
+  # Keep only the helper hidden; Electron must launch normally for later preview windows.
+  Start-Process -FilePath $launch -WorkingDirectory ([IO.Path]::GetDirectoryName($launch)) -WindowStyle Normal
   Write-UpdateLog 'Update applied successfully.'
   try { Remove-UpdatePath $backupPath } catch { Write-UpdateLog ('Backup cleanup: ' + $_.Exception.Message) }
   exit 0
@@ -60,7 +61,7 @@ try {
     } catch { Write-UpdateLog ('Rollback failed: ' + $_.Exception.Message) }
   }
   if ($parentExited -and (Test-Path -LiteralPath $env:ZT_LAUNCH -PathType Leaf)) {
-    try { Start-Process -FilePath $env:ZT_LAUNCH -WorkingDirectory ([IO.Path]::GetDirectoryName($env:ZT_LAUNCH)) -WindowStyle Hidden } catch {}
+    try { Start-Process -FilePath $env:ZT_LAUNCH -WorkingDirectory ([IO.Path]::GetDirectoryName($env:ZT_LAUNCH)) -WindowStyle Normal } catch {}
   }
   exit 1
 } finally {
